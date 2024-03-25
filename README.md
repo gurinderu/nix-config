@@ -1,7 +1,7 @@
 # Requirements
 
 - Installed [nix](https://nixos.org/download/)
-- Enabled [flakes](https://nixos.wiki/wiki/Flakes
+- Enabled [flakes](https://nixos.wiki/wiki/Flakes)
 
 
 # Install
