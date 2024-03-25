@@ -1,11 +1,10 @@
 # This is your home-manager configuration file
 # Use this to configure your home environment (it replaces ~/.config/nixpkgs/home.nix)
-{
-  inputs,
-  lib,
-  config,
-  pkgs,
-  ...
+{ inputs
+, lib
+, config
+, pkgs
+, ...
 }: {
   # You can import other home-manager modules here
   imports = [
@@ -40,18 +39,18 @@
       pkgs.prettyping
       pkgs.pkg-config
       pkgs.hwloc
-      
+
       # docker 
       pkgs.docker
       pkgs.docker-compose
       pkgs.colima
       pkgs.docker-credential-helpers
-      
+
       pkgs.slack
-      
-      ];
+
+    ];
   };
-  
+
 
 
   # Add stuff for your user as you see fit:
@@ -68,10 +67,10 @@
   programs.starship = import ./starship.nix;
   programs.zsh = import ./zsh.nix;
   programs.neovim = import ./neovim.nix;
-  
+
   programs.direnv = {
-      enable = true;
-      nix-direnv.enable = true;
+    enable = true;
+    nix-direnv.enable = true;
   };
 
   # https://nixos.wiki/wiki/FAQ/When_do_I_update_stateVersion

@@ -21,77 +21,79 @@
   };
 
   outputs = inputs@{ self, nix-darwin, nixpkgs, home-manager, nix-colors, nix-homebrew, homebrew-core, homebrew-cask, ... }:
-  let
-    configuration = { pkgs, ... }: {
-      # List packages installed in system profile. To search by name, run:
-      # $ nix-env -qaP | grep wget
-      environment.systemPackages =
-        [
-        pkgs.vim
-        ];
+    let
+      configuration = { pkgs, ... }: {
+        # List packages installed in system profile. To search by name, run:
+        # $ nix-env -qaP | grep wget
+        environment.systemPackages =
+          [
+            pkgs.vim
+          ];
 
-      # Auto upgrade nix package and the daemon service.
-      services.nix-daemon.enable = true;
-      nix.package = pkgs.nix;
+        # Auto upgrade nix package and the daemon service.
+        services.nix-daemon.enable = true;
+        nix.package = pkgs.nix;
 
-      # Necessary for using flakes on this system.
-      nix.settings.experimental-features = "nix-command flakes";
+        # Necessary for using flakes on this system.
+        nix.settings.experimental-features = "nix-command flakes";
 
-      # Create /etc/zshrc that loads the nix-darwin environment.
-      programs.zsh.enable = true;  # default shell on catalina
-      # programs.fish.enable = true;
+        # Create /etc/zshrc that loads the nix-darwin environment.
+        programs.zsh.enable = true; # default shell on catalina
+        # programs.fish.enable = true;
 
-      # Set Git commit hash for darwin-version.
-      system.configurationRevision = self.rev or self.dirtyRev or null;
+        # Set Git commit hash for darwin-version.
+        system.configurationRevision = self.rev or self.dirtyRev or null;
 
-      # Used for backwards compatibility, please read the changelog before changing.
-      # $ darwin-rebuild changelog
-      system.stateVersion = 4;
+        # Used for backwards compatibility, please read the changelog before changing.
+        # $ darwin-rebuild changelog
+        system.stateVersion = 4;
 
-      # The platform the configuration will be used on.
-      nixpkgs.hostPlatform = "aarch64-darwin";
-      nixpkgs.config.allowUnfree = true; 
-      
-      security.pam.enableSudoTouchIdAuth = true;  
-      
-      users.users.gurinderu.home = "/Users/gurinderu";
-    };
-  in
-  {
-    # Build darwin flake using:
-    # $ darwin-rebuild build --flake .#simple
-    darwinConfigurations."mac_aarch64" = nix-darwin.lib.darwinSystem {
-      system = "aarch64-darwin";
-      modules = [
-      configuration
-      home-manager.darwinModules.home-manager {
-          home-manager.useGlobalPkgs = true;
-          home-manager.useUserPackages = true;
-          home-manager.extraSpecialArgs = {
+        # The platform the configuration will be used on.
+        nixpkgs.hostPlatform = "aarch64-darwin";
+        nixpkgs.config.allowUnfree = true;
+
+        security.pam.enableSudoTouchIdAuth = true;
+
+        users.users.gurinderu.home = "/Users/gurinderu";
+      };
+    in
+    {
+      # Build darwin flake using:
+      # $ darwin-rebuild build --flake .#simple
+      darwinConfigurations."mac_aarch64" = nix-darwin.lib.darwinSystem {
+        system = "aarch64-darwin";
+        modules = [
+          configuration
+          home-manager.darwinModules.home-manager
+          {
+            home-manager.useGlobalPkgs = true;
+            home-manager.useUserPackages = true;
+            home-manager.extraSpecialArgs = {
               inherit inputs;
               inherit nixpkgs;
               inherit home-manager;
               inherit nix-colors;
               inherit self;
-            };      
-          home-manager.users.gurinderu = import ./users/gurinderu/home.nix;
-        }
-         nix-homebrew.darwinModules.nix-homebrew{
-          nix-homebrew = {
-           enable = true;
-           enableRosetta = true;
-           user = "gurinderu";
-           taps = {
-              "homebrew/homebrew-core" = homebrew-core;
-              "homebrew/homebrew-cask" = homebrew-cask;
             };
-            mutableTaps = false;
-          };
-        }
-      ];
-    };
+            home-manager.users.gurinderu = import ./users/gurinderu/home.nix;
+          }
+          nix-homebrew.darwinModules.nix-homebrew
+          {
+            nix-homebrew = {
+              enable = true;
+              enableRosetta = true;
+              user = "gurinderu";
+              taps = {
+                "homebrew/homebrew-core" = homebrew-core;
+                "homebrew/homebrew-cask" = homebrew-cask;
+              };
+              mutableTaps = false;
+            };
+          }
+        ];
+      };
 
-    # Expose the package set, including overlays, for convenience.
-    darwinPackages = self.darwinConfigurations."mac_aarch64".pkgs;
-  };
+      # Expose the package set, including overlays, for convenience.
+      darwinPackages = self.darwinConfigurations."mac_aarch64".pkgs;
+    };
 }

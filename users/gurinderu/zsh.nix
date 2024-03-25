@@ -1,5 +1,7 @@
 {
   enable = true;
+  enableCompletion = true;
+  enableAutosuggestions = true;
   history = {
     extended = true;
     save = 50000;
