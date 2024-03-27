@@ -47,7 +47,6 @@
       pkgs.docker-credential-helpers
 
       pkgs.slack
-
     ];
   };
 

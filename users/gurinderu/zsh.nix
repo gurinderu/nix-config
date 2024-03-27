@@ -18,4 +18,6 @@
     ll = "eza -la --icons";
     ping = "prettyping";
   };
+  profileExtra = ''
+  '';
 }
