@@ -18,6 +18,8 @@
     ll = "eza -la --icons";
     ping = "prettyping";
   };
-  profileExtra = ''
+  initExtra = ''
+    source "$HOME/.sdkman/bin/sdkman-init.sh"
+    export PATH=$HOME/.cargo/bin:$PATH
   '';
 }

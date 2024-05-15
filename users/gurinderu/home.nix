@@ -28,7 +28,11 @@
       pkgs.nixpkgs-fmt
       pkgs.git
       pkgs.nerdfonts
+
+      #rust
       pkgs.rustup
+      pkgs.sccache
+
       pkgs.bat
       pkgs.tokei
       pkgs.fd
@@ -47,6 +51,7 @@
       pkgs.docker-credential-helpers
 
       pkgs.slack
+      pkgs.lnav
     ];
   };
 
@@ -59,6 +64,7 @@
   programs.home-manager.enable = true;
   programs.git = {
     enable = true;
+    lfs.enable = true;
     userName = "Nick Pavlov";
     userEmail = "gurinderu@gmail.com";
   };
