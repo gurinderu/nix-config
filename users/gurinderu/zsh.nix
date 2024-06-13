@@ -21,5 +21,7 @@
   initExtra = ''
     source "$HOME/.sdkman/bin/sdkman-init.sh"
     export PATH=$HOME/.cargo/bin:$PATH
+    export RUSTC_WRAPPER="$(which sccache)"
+    export SCCACHE_CACHE_SIZE="32G"
   '';
 }
