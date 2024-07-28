@@ -52,6 +52,7 @@
 
       pkgs.slack
       pkgs.lnav
+      pkgs.podman
     ];
   };
 

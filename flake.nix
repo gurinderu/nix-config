@@ -22,9 +22,13 @@
       url = "github:homebrew/homebrew-bundle";
       flake = false;
     };
+    cfergeau-crc = {
+      url = "github:cfergeau/crc";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, nix-darwin, nixpkgs, home-manager, nix-colors, nix-homebrew, homebrew-core, homebrew-cask, homebrew-bundle, ... }:
+  outputs = inputs@{ self, nix-darwin, nixpkgs, home-manager, nix-colors, nix-homebrew, homebrew-core, homebrew-cask, homebrew-bundle,cfergeau-crc, ... }:
     let
       configuration = { pkgs, ... }: {
         # List packages installed in system profile. To search by name, run:
@@ -91,21 +95,24 @@
                 "homebrew/homebrew-core" = homebrew-core;
                 "homebrew/homebrew-cask" = homebrew-cask;
                 "homebrew/bundle" = homebrew-bundle;
+                "cfergeau/crc" = cfergeau-crc;
               };
               mutableTaps = false;
             };
-
             homebrew = {
               enable = true;
-              onActivation.cleanup = "zap";
+              onActivation = {
+                autoUpdate = true;
+                cleanup = "zap";
+                upgrade = true;
+              };
               casks = [
                 "warp"
               ];
-
-
+              brews = [
+                "cfergeau/crc/vfkit"
+              ];
             };
-
-
           }
         ];
       };
