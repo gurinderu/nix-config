@@ -45,7 +45,18 @@ nix-darwin.lib.darwinSystem {
           "homebrew/homebrew-cask" = inputs.homebrew-cask;
           "homebrew/homebrew-bundle" = inputs.homebrew-bundle;
         };
-        mutableTaps = true;
+        # Fully declarative taps: $HOMEBREW_LIBRARY/Taps is a single symlink into
+        # the nix store (the taps-env built from the inputs above). mutableTaps =
+        # true instead makes each namespace a real writable dir that nix-homebrew
+        # mkdir/chown/rsyncs into — which crashes when Taps is ALREADY the store
+        # symlink from a prior activation: `mkdir -p Taps/<ns>` and the chown that
+        # follows land inside the read-only /nix/store, aborting the rebuild
+        # (observed after the nix reinstall: "mkdir /opt/homebrew/Library/Taps"
+        # failing). All taps here come from flake inputs and nothing is tapped by
+        # hand, so the immutable symlink layout is the correct one; it also lets
+        # is_occupied treat the existing store symlink as replaceable, so the
+        # switch heals the mismatch with a plain `ln -shf` and no manual cleanup.
+        mutableTaps = false;
         autoMigrate = true;
       };
       homebrew = {
