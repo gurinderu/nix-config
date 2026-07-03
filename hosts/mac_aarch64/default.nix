@@ -72,7 +72,14 @@ nix-darwin.lib.darwinSystem {
           # should be removed, switch to "zap" AND declare the taps in
           # homebrew.taps so cleanup leaves nix-homebrew's taps alone.)
           cleanup = "none";
-          upgrade = true;
+          # Keep `darwin-rebuild switch` independent of Homebrew's network. With
+          # upgrade=true every switch runs `brew upgrade`, which hits the network
+          # and can hang or fail — fatal on this host precisely when you need a
+          # rebuild most: a repair switch on the fail-closed Mac (DNS/traffic down)
+          # would stall in the brew step. The single managed cask (Ice) is pinned
+          # by the flake inputs; upgrade it deliberately with `brew upgrade` when
+          # wanted, not implicitly on every rebuild.
+          upgrade = false;
         };
       };
     }
