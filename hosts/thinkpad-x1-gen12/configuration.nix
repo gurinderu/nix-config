@@ -246,7 +246,8 @@
   };
 
   # Tailscale: stable reach into this roaming laptop from any network (no dependence on
-  # the DHCP LAN IP). Firewall is disabled host-wide, so no extra openFirewall needed.
+  # the DHCP LAN IP). The firewall IS enabled (see networking.firewall below), so
+  # Tailscale's WireGuard UDP port is opened via services.tailscale.openFirewall.
   # Auth is done once manually (`sudo tailscale up`) with key expiry disabled in the
   # admin console — no authKeyFile so rebuilds never fail on an expired/used key.
   services.tailscale.enable = true;
