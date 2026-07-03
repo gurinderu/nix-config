@@ -80,7 +80,44 @@ in
     }
     ${lib.concatStringsSep "\n    " specLines}
 
-    $DRY_RUN_CMD ${pkgs.gnused}/bin/sed "''${SED_ARGS[@]}" ${singBoxConfig} > "$CONFIG_DIR/config.json"
-    $DRY_RUN_CMD chmod 600 "$CONFIG_DIR/config.json"
+    # Render atomically: substitute into a private temp file, validate it, then
+    # rename over the live config in one step. Three bugs this closes:
+    #   1. A dry run must NOT touch the live file. `$DRY_RUN_CMD sed ... > file`
+    #      does not protect the redirect — the shell opens (truncates) the target
+    #      before DRY_RUN_CMD (echo) runs, so a dry run used to blow away
+    #      config.json and fill it with the echoed command line, which embeds the
+    #      DECRYPTED secrets. Guard the whole write on DRY_RUN_CMD instead.
+    #   2. `sed > config.json` is truncate-then-stream: the launchd WatchPaths
+    #      reload (hosts/mac_aarch64/sing-box.nix) can fire mid-write and hand
+    #      sing-box a half-written file. rename(2) is atomic — readers see either
+    #      the whole old file or the whole new one.
+    #   3. No validation: a substitution bug (or a leftover SING_BOX_ placeholder)
+    #      shipped straight to the daemon, which only rejected it opaquely at
+    #      reload. `sing-box check` fails the activation and leaves the last-good
+    #      config in place instead.
+    render_config() {
+      local tmp
+      tmp=$(${pkgs.coreutils}/bin/mktemp "$CONFIG_DIR/.config.json.XXXXXX")
+      ${pkgs.gnused}/bin/sed "''${SED_ARGS[@]}" ${singBoxConfig} > "$tmp"
+      chmod 600 "$tmp"
+      if ! ${pkgs.sing-box}/bin/sing-box check -c "$tmp" 2>&1; then
+        echo "sing-box: rendered config failed validation - keeping existing config.json" >&2
+        rm -f "$tmp"
+        exit 1
+      fi
+      # Belt-and-suspenders: no placeholder token may survive into production.
+      if ${pkgs.gnugrep}/bin/grep -q 'SING_BOX_' "$tmp"; then
+        echo "sing-box: unsubstituted SING_BOX_ placeholder in rendered config - aborting" >&2
+        rm -f "$tmp"
+        exit 1
+      fi
+      mv -f "$tmp" "$CONFIG_DIR/config.json"
+    }
+
+    if [ -n "''${DRY_RUN_CMD:-}" ]; then
+      echo "would render, validate and atomically install $CONFIG_DIR/config.json"
+    else
+      render_config
+    fi
   '';
 }
