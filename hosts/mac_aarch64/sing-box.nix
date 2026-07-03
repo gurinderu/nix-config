@@ -47,11 +47,12 @@ let
   # so launchd's append-mode fd keeps writing to the same inode (no reopen needed,
   # which launchd can't do anyway). rotate+compress cap total disk; old rotations
   # past the count are deleted automatically.
-  # /var/log/net-observer.log is written by the net-observer daemon
-  # (./net-observer.nix); it shares this rotation so no second logrotate
-  # daemon is needed. Keep the path in sync with net-observer.nix.
+  # /var/log/net-observer.log and /var/log/dns-fallback.log are written by the
+  # net-observer and dns-fallback daemons (./net-observer.nix, ./dns-fallback.nix);
+  # they share this rotation so no second logrotate daemon is needed. Keep the
+  # paths in sync with those modules.
   logrotateConf = pkgs.writeText "sing-box-logrotate.conf" ''
-    ${logPath} /var/log/net-observer.log {
+    ${logPath} /var/log/net-observer.log /var/log/dns-fallback.log {
         su root wheel
         size 20M
         rotate 5
@@ -148,12 +149,26 @@ in
   # a single transition emits (launchd won't relaunch this job more than once per
   # interval); the main daemon's lsof-on-cache.db guard absorbs the old/new
   # overlap of back-to-back kickstarts.
+  #
+  # Suppression: dns-fallback.nix rewrites the DNS servers (and thus resolv.conf)
+  # when it engages/restores the fail-open fallback. Those rewrites are OUR OWN
+  # doing, not a network transition, and on the restore path sing-box has just
+  # recovered — kickstarting it here would kill it again for no reason. So this
+  # is now a small script that skips the kickstart when dns-fallback's flip flag
+  # was touched in the last 20s. Everything it uses is on the always-mounted
+  # system volume, so the /nix dependency stays absent.
   launchd.daemons.sing-box-netreload.serviceConfig = {
     ProgramArguments = [
-      "/bin/launchctl"
-      "kickstart"
-      "-k"
-      "system/org.nixos.sing-box"
+      "/bin/sh"
+      "-c"
+      ''
+        f=/var/run/dns-fallback.flip
+        if [ -f "$f" ]; then
+          age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f %m "$f") ))
+          [ "$age" -ge 0 ] && [ "$age" -lt 20 ] && exit 0
+        fi
+        exec /bin/launchctl kickstart -k system/org.nixos.sing-box
+      ''
     ];
     WatchPaths = [ "/etc/resolv.conf" ];
     RunAtLoad = false;

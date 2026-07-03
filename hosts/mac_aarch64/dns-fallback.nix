@@ -15,17 +15,35 @@
 # inline /bin/sh script using only always-present system binaries — no
 # /nix/store paths anywhere in ProgramArguments.
 #
-# Logic: if the sing-box TUN address is absent for >= 4 consecutive 30s checks
-# (~2 min — long enough for wait4path plus a normal boot to win the race),
-# flip DNS on the known network services to public resolvers and remember that
-# in a state file under /var/run (tmpfs, so a reboot resets the state). As
-# soon as the TUN reappears, restore the pin. If the daemon never touched DNS
-# (no state file), it never writes anything — manual repair-session overrides
-# are not fought over.
+# Design: a stateless reconciler, NOT a marker-based toggle. Each 30s tick it
+# reads the ACTUAL system DNS (networksetup -getdnsservers) and drives it to
+# the state the current TUN reality demands:
+#   - TUN address present  -> DNS must equal the pin (172.19.0.1). If it does
+#     not, re-pin. This self-heals the post-reboot fail-open case: an earlier
+#     fallback that got baked into SystemConfiguration is corrected the moment
+#     the TUN returns, with no in-memory marker needed to "remember" it.
+#   - TUN absent for >= 4 consecutive checks (~2 min, long enough for wait4path
+#     plus a normal boot to win the race) -> DNS must equal the public
+#     fallback. If it does not, engage it.
+# Deriving state from reality (rather than a /var/run marker that a reboot
+# clears while the DNS setting persists) is what makes it correct across
+# reboots, darwin-rebuilds, and manual edits — the earlier marker-based version
+# stranded the machine fail-open after a reboot and could wedge itself into a
+# zero-DNS state after a mid-incident rebuild.
 #
 # The ordinary wedge (sing-box process alive but stuck) keeps its existing
 # recovery path — KeepAlive + the net-observer watchdog kickstart. This
 # daemon only reacts to the TUN address vanishing entirely.
+#
+# Coupling with sing-box-netreload: flipping DNS makes configd rewrite
+# resolv.conf, which is sing-box-netreload's WatchPaths trigger. Left alone
+# that would kickstart (kill+relaunch) the very sing-box we just recovered on
+# the re-pin. set_dns() touches a flip flag that netreload honours (skips its
+# kickstart if the flag is fresh) — see hosts/mac_aarch64/sing-box.nix.
+#
+# Manual override: `touch /var/run/dns-fallback.disabled` makes the daemon
+# idle (it stops reconciling), so a repair session can hand-set DNS without
+# the daemon fighting it. The flag is on tmpfs, so a reboot re-arms protection.
 #
 # Trade-off, eyes open: while the fallback is engaged, DNS queries go to
 # public resolvers over the RU consumer network — fakeip routing, ECH
@@ -37,30 +55,59 @@
 let
   # Single source of truth: the pin set in configuration.nix.
   tunDns = lib.head config.networking.dns;
+  # Dots escaped for the ifconfig regex so "172.19.0.1" cannot match e.g.
+  # "172x19y0z1" on some unrelated interface.
+  tunDnsRe = lib.replaceStrings [ "." ] [ "\\." ] tunDns;
   fallbackDns = "8.8.8.8 1.1.1.1";
   # networksetup wants the UI service names, same list as knownNetworkServices.
-  services = config.networking.knownNetworkServices;
-  perService = dns:
-    lib.concatMapStringsSep "\n      "
-      (s: ''/usr/sbin/networksetup -setdnsservers "${s}" ${dns}'')
-      services;
+  servicesArr = lib.concatMapStringsSep " " lib.escapeShellArg config.networking.knownNetworkServices;
   script = ''
-    STATE=/var/run/dns-fallback.engaged
+    FLIP=/var/run/dns-fallback.flip
+    DISABLE=/var/run/dns-fallback.disabled
+    SERVICES=(${servicesArr})
+    WANT_TUN="${tunDns}"
+    WANT_FALLBACK="${fallbackDns}"
+
+    log() { echo "$(/bin/date '+%F %T') $1"; }
+
+    # Current DNS of the first managed service, normalized to a space-joined
+    # line ("172.19.0.1" or "8.8.8.8 1.1.1.1"). set_dns always writes every
+    # service together, so the first is representative. The "There aren't any
+    # DNS Servers set on X." message when unset never equals a wanted value.
+    current_dns() {
+      /usr/sbin/networksetup -getdnsservers "''${SERVICES[0]}" \
+        | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ *$//'
+    }
+
+    # Apply DNS to every managed service. Touch FLIP first so sing-box-netreload
+    # skips the kickstart it would otherwise do in response to the resolv.conf
+    # rewrite we are about to cause. $1 is intentionally unquoted so a
+    # multi-server value word-splits into separate networksetup arguments.
+    set_dns() {
+      /usr/bin/touch "$FLIP"
+      for svc in "''${SERVICES[@]}"; do
+        /usr/sbin/networksetup -setdnsservers "$svc" $1
+      done
+    }
+
     MISS=0
     while true; do
-      if /sbin/ifconfig | /usr/bin/grep -q 'inet ${tunDns} '; then
+      if [ -e "$DISABLE" ]; then
+        /bin/sleep 30
+        continue
+      fi
+      CUR=$(current_dns)
+      if /sbin/ifconfig | /usr/bin/grep -q 'inet ${tunDnsRe} '; then
         MISS=0
-        if [ -f "$STATE" ]; then
-          ${perService tunDns}
-          rm -f "$STATE"
-          echo "$(/bin/date '+%F %T') TUN back - DNS re-pinned to ${tunDns}"
+        if [ "$CUR" != "$WANT_TUN" ]; then
+          set_dns "$WANT_TUN"
+          log "TUN present, DNS was '$CUR' - re-pinned to $WANT_TUN"
         fi
       else
-        MISS=$((MISS+1))
-        if [ "$MISS" -ge 4 ] && [ ! -f "$STATE" ]; then
-          ${perService fallbackDns}
-          : > "$STATE"
-          echo "$(/bin/date '+%F %T') TUN absent for $MISS checks - DNS fallback ${fallbackDns} engaged"
+        MISS=$((MISS + 1))
+        if [ "$MISS" -ge 4 ] && [ "$CUR" != "$WANT_FALLBACK" ]; then
+          set_dns "$WANT_FALLBACK"
+          log "TUN absent for $MISS checks, DNS was '$CUR' - fallback $WANT_FALLBACK engaged"
         fi
       fi
       /bin/sleep 30
