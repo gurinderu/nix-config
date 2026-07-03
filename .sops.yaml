@@ -1,0 +1,9 @@
+keys:
+  - &gurinderu age136r67xtts44mvg8a84mkeq4pfsv47gs5jkm7xddwnzwkfq3wwvnqrmj9s6
+  - &thinkpad-x1-gen12 age1mzmfv3k2rw5ut0zn76y46wh7cl7x4ac6zh9mq08fpxxu23mqqdysnvwv3q
+
+creation_rules:
+  - key_groups:
+      - age:
+          - *gurinderu
+          - *thinkpad-x1-gen12
