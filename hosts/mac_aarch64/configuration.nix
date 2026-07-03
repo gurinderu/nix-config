@@ -65,10 +65,6 @@
     })
   ];
   nixpkgs.config.allowUnfree = true;
-  nixpkgs.config.permittedInsecurePackages = [
-    "lima-full-1.2.2"
-    "lima-additional-guestagents-1.2.2"
-  ];
 
   users.users.gurinderu.home = "/Users/gurinderu";
 }
