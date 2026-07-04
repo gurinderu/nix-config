@@ -78,6 +78,21 @@ let
     ]; # runs-on: [self-hosted, nixos, thinkpad]
     replace = true;
 
+    # Run as a fixed system user instead of the module's default DynamicUser
+    # (github-runners/service.nix: `DynamicUser = mkDefault true`, disabled when
+    # `user`/`group` are set). DynamicUser allocates a fresh uid per activation and
+    # puts CacheDirectory under /var/cache/private/<name> (0700 root), reachable
+    # only via the service's mount-namespace bind. When sccache spawns the compiler
+    # in a subprocess it resolves CARGO_HOME to the real /var/cache/private/... path
+    # and the child — without the namespaced view — hits EACCES ("os error 13")
+    # traversing the 0700-root `private` dir, failing clippy/build/test at random
+    # ("sccache: failed to spawn ..."). A stable uid puts the cache at
+    # /var/cache/<name> owned by this user (no `private` indirection, no
+    # per-activation re-chown), removing that failure class. Per-instance user
+    # keeps the isolation DynamicUser gave each runner.
+    user = "gh-runner-warp-${toString n}";
+    group = "gh-runner-warp-${toString n}";
+
     # Isolated from the system/home-manager profiles, so duplicating packages the host
     # user also has is intentional. `docker-client` talks to the Podman socket.
     extraPackages = with pkgs; [
@@ -226,6 +241,19 @@ in
   };
 
   services.github-runners = forEachRunner (n: lib.nameValuePair (runnerName n) (mkRunner n));
+
+  # Fixed system users/groups backing each runner's `user`/`group` (the
+  # github-runners module runs the service as them but does NOT create them).
+  # isSystemUser keeps them in the system uid range, out of login space.
+  users.groups = forEachRunner (n: lib.nameValuePair "gh-runner-warp-${toString n}" { });
+  users.users = forEachRunner (
+    n:
+    lib.nameValuePair "gh-runner-warp-${toString n}" {
+      isSystemUser = true;
+      group = "gh-runner-warp-${toString n}";
+      description = "GitHub Actions runner warp-${toString n}";
+    }
+  );
 
   systemd.services = lib.mkMerge [
     (forEachRunner (
