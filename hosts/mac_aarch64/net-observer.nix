@@ -49,6 +49,34 @@
 #                the portal flow bypasses the proxy, but don't storm).
 #                Kill switch without a rebuild:
 #                  touch /var/lib/net-observer/watchdog-off
+#   DNS  lines — one-shot detail dump when a tick's DNS probes look anomalous
+#                (dns_anomaly below): mDNSResponder cache for the probe domain
+#                (a fakeip address there = poisoned cache) and the active
+#                scutil resolvers. Once per incident, re-armed on recovery.
+#
+# DNS columns in TICK — hunting the intermittent resolution failure of
+# nks.lab.mirari.ru (the exact failure mode — NXDOMAIN, SERVFAIL, timeout, or
+# a fakeip answer — is what these columns are here to distinguish).
+# Background: .ru is the ONLY name class that needs a live upstream resolver —
+# geosite-category-ru resolves via sing-box's `local` server (in practice the
+# network's DHCP resolver), while every other domain gets an instant fakeip
+# with no network round-trip. So "only this site breaks" points at that path:
+#   nks[sb]   probe domain via sing-box's DNS (the TUN address) — what apps see
+#   ru[sb]    control .ru domain via sing-box — separates "this zone is broken"
+#             (nks fails, ru OK → Yandex Cloud NS) from "the whole .ru/local
+#             path is broken" (both fail → router DNS dead/banned)
+#   nks[rtr]  the DHCP resolver asked directly — the actual upstream that the
+#             `local` server uses on this network
+#   nks[doh]  Cloudflare DoH (1.1.1.1) bound to the physical interface — is
+#             the zone alive at all, bypassing every local resolver and the TUN
+#   site      HTTP code of https://<probe domain>/ via normal routing — the
+#             user-visible outcome tied to the same tick (302 = healthy)
+# Verdict vocabulary: OK(ip/NNms), FAKEIP(ip) — a .ru name answered from the
+# fakeip range, ALWAYS a bug (e.g. a search-domain variant like
+# <domain>.Dlink hit the fakeip catch-all, which answers any name and has no
+# NXDOMAIN — the client then connects to a bogus address); EMPTY — NOERROR
+# with no A record; SERVFAIL/NXDOMAIN/... — upstream rcode; TIMEOUT; SKIP —
+# prerequisite missing (no rendered config / no DHCP resolver).
 { pkgs, config, ... }:
 let
   # Rendered sing-box config (home-manager substitutes sops secrets into it at
@@ -59,6 +87,13 @@ let
   singBoxConfigPath = "${config.users.users.gurinderu.home}/.config/sing-box/config.json";
   logPath = "/var/log/net-observer.log";
   jq = "${pkgs.jq}/bin/jq";
+
+  # The domain whose intermittent resolution failures we are hunting, plus a
+  # control domain that shares ONLY the .ru/`local` DNS path with it (see the
+  # DNS-columns doc above). ya.ru: short, stable, unquestionably in
+  # geosite-category-ru.
+  dnsProbeDomain = "nks.lab.mirari.ru";
+  dnsControlDomain = "ya.ru";
 
   observer = pkgs.writeShellScript "net-observer" ''
     # --- EVT stream (background) -------------------------------------------
@@ -120,6 +155,62 @@ let
       fi
     }
 
+    # One A query against one server; verdict per the vocabulary in the header.
+    # The fakeip check matters most: geosite-category-ru must route .ru names
+    # to a REAL resolver, so a 198.18.0.0/15 answer proves the query missed
+    # the rule (fakeip answers any name — it cannot say NXDOMAIN).
+    probe_dns() { # server domain -> OK(ip/NNms)/FAKEIP(ip)/EMPTY/<RCODE>/TIMEOUT/SKIP
+      local out rcode ip ms
+      [ -n "$1" ] || { echo SKIP; return; }
+      out=$(/usr/bin/dig @"$1" +time=2 +tries=1 +noall +comments +answer +stats "$2" A 2>/dev/null)
+      rcode=$(printf '%s\n' "$out" | /usr/bin/awk -F', ' '/->>HEADER<<-/ { sub(/status: /, "", $2); print $2; exit }')
+      if [ -z "$rcode" ]; then echo TIMEOUT; return; fi
+      if [ "$rcode" != "NOERROR" ]; then echo "$rcode"; return; fi
+      ip=$(printf '%s\n' "$out" | /usr/bin/awk '$4 == "A" { print $5; exit }')
+      ms=$(printf '%s\n' "$out" | /usr/bin/awk '/Query time:/ { print $4; exit }')
+      case "$ip" in
+        "") echo EMPTY ;;
+        198.18.* | 198.19.*) echo "FAKEIP($ip)" ;;
+        *) echo "OK($ip/''${ms}ms)" ;;
+      esac
+    }
+
+    # Cloudflare DoH JSON API bound to the physical interface: bypasses the
+    # TUN and every local resolver, so it answers "is the zone itself alive"
+    # no matter how sick the local DNS machinery is. Cloudflare, not Google:
+    # 8.8.8.8:443 is TCP-blackholed on the direct RU path (verified from the
+    # Mac 2026-07-06), while 1.1.1.1:443 is the same endpoint the direct[]
+    # probe already exercises every tick.
+    probe_doh() { # domain iface -> OK(ip)/STATUS(n)/FAIL
+      local out st ip
+      out=$(/usr/bin/curl --interface "$2" -m 3 -s -H 'accept: application/dns-json' \
+        "https://1.1.1.1/dns-query?name=$1&type=A" 2>/dev/null)
+      [ -n "$out" ] || { echo FAIL; return; }
+      st=$(printf '%s' "$out" | ${jq} -r '.Status // "?"' 2>/dev/null)
+      ip=$(printf '%s' "$out" | ${jq} -r '[.Answer[]? | select(.type == 1) | .data][0] // empty' 2>/dev/null)
+      if [ "$st" = "0" ] && [ -n "$ip" ]; then echo "OK($ip)"; else echo "STATUS(''${st:-?})"; fi
+    }
+
+    # Decides whether this tick's DNS verdicts constitute an incident worth
+    # the one-shot detail dump (mDNSResponder cache + scutil resolvers).
+    # Inputs: $nsb $rsb $nrtr $ndoh — verdicts per the header vocabulary.
+    # The dump is gated by dns_incident so it fires once per incident and
+    # re-arms when the condition clears.
+    #
+    # Policy: a FAKEIP answer in any column is always an incident (a .ru name
+    # must never resolve into the fakeip range, whatever else is going on).
+    # Otherwise the probe domain failing is an incident only while DoH still
+    # resolves the zone — the "only .ru sites die" signature. When DoH also
+    # fails the whole network is down and the gw/direct columns already tell
+    # that story, so no dump. site=000 with healthy DNS is deliberately not
+    # an anomaly here: that is a routing problem, not a DNS one.
+    dns_anomaly() { # -> 0 anomaly / 1 healthy
+      case "$nsb$rsb$nrtr" in *FAKEIP*) return 0 ;; esac
+      case "$nsb" in OK* | SKIP) return 1 ;; esac
+      case "$ndoh" in OK*) return 0 ;; esac
+      return 1
+    }
+
     # Defaults + every sing-box TUN chunk route — sing-box's auto_route on
     # macOS is not one default but a binary decomposition of the IPv4 space
     # (1, 2/7, 4/6, ... 128.0/1, carved around route_exclude_address), all
@@ -145,10 +236,15 @@ let
 
     echo "$(/bin/date '+%F %T') START net-observer"
     /bin/mkdir -p /var/lib/net-observer
+    # Each tick's DNS probes use a fresh mktemp dir removed at end of tick; a
+    # SIGKILL mid-tick (launchd stop between mktemp and rm) would orphan one.
+    # Sweep any left by a killed predecessor so they can't accumulate.
+    /bin/rm -rf /tmp/net-observer-dns.* 2>/dev/null
 
     prev_snap=""
     wedge_ticks=0
     last_kick=0
+    dns_incident=0
     while :; do
       ts=$(/bin/date '+%F %T')
 
@@ -168,6 +264,23 @@ let
             '/^Network interfaces:/ { for (i = 3; i <= NF; i++) if ($i !~ /^utun/) { print $i; exit } }')
           ;;
       esac
+
+      # DNS probes (dig ≤2s, doh ≤3s, site ≤4s) run in the background while the
+      # sequential gw/direct/tun/vless probes below execute, so a healthy tick
+      # costs no extra wall time; collected right before the TICK line. NB: wait on
+      # explicit pids only — a bare `wait` would block forever on the EVT
+      # route-monitor loop. tundns = sing-box's DNS address (the TUN address,
+      # same one route_snapshot reads); rtr = the network's DHCP resolver.
+      tundns=$(${jq} -r '[.inbounds[]? | select(.type == "tun") | .address[]?][0] // empty' \
+        "${singBoxConfigPath}" 2>/dev/null | /usr/bin/cut -d/ -f1)
+      rtr=$(/usr/sbin/ipconfig getpacket "$iface" 2>/dev/null \
+        | /usr/bin/sed -n 's/^domain_name_server.*: *{\{0,1\}\([0-9][0-9.]*\).*/\1/p' | /usr/bin/head -1)
+      dnstmp=$(/usr/bin/mktemp -d /tmp/net-observer-dns.XXXXXX)
+      probe_dns "$tundns" "${dnsProbeDomain}" >"$dnstmp/nsb" 2>/dev/null & dp1=$!
+      probe_dns "$tundns" "${dnsControlDomain}" >"$dnstmp/rsb" 2>/dev/null & dp2=$!
+      probe_dns "$rtr" "${dnsProbeDomain}" >"$dnstmp/nrtr" 2>/dev/null & dp3=$!
+      probe_doh "${dnsProbeDomain}" "$iface" >"$dnstmp/ndoh" 2>/dev/null & dp4=$!
+      /usr/bin/curl -m 4 -s -o /dev/null -w '%{http_code}' "https://${dnsProbeDomain}/" >"$dnstmp/site" 2>/dev/null & dp5=$!
 
       gw=$(/sbin/route -n get default 2>/dev/null | /usr/bin/awk '/gateway:/ { print $2; exit }')
       if [ -z "$gw" ] && [ -n "$iface" ]; then
@@ -215,7 +328,41 @@ let
         vls=" vless=skip"
       fi
 
-      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--}$vls"
+      wait "$dp1" "$dp2" "$dp3" "$dp4" "$dp5" 2>/dev/null
+      nsb=$(/bin/cat "$dnstmp/nsb" 2>/dev/null)
+      rsb=$(/bin/cat "$dnstmp/rsb" 2>/dev/null)
+      nrtr=$(/bin/cat "$dnstmp/nrtr" 2>/dev/null)
+      ndoh=$(/bin/cat "$dnstmp/ndoh" 2>/dev/null)
+      site=$(/bin/cat "$dnstmp/site" 2>/dev/null)
+      /bin/rm -rf "$dnstmp"
+
+      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
+
+      # One-shot DNS detail dump, gated so an incident logs once and re-arms
+      # after recovery. What the dump answers: was the cache poisoned with a
+      # fakeip (the search-domain mechanism), and which resolvers the system
+      # actually had at that moment.
+      if dns_anomaly; then
+        if [ "$dns_incident" = 0 ]; then
+          dns_incident=1
+          cache=$(/usr/bin/dscacheutil -q host -a name "${dnsProbeDomain}" 2>/dev/null)
+          if [ -n "$cache" ]; then
+            printf '%s\n' "$cache" | /usr/bin/sed "s/^/$ts DNS cache: /"
+          else
+            echo "$ts DNS cache: (empty)"
+          fi
+          case "$cache" in
+            *198.18.* | *198.19.* | *fc00:*)
+              echo "$ts DNS ALERT poisoned mDNSResponder cache: fakeip for a .ru name"
+              ;;
+          esac
+          /usr/sbin/scutil --dns 2>/dev/null \
+            | /usr/bin/awk '/^resolver #|nameserver|search domain/' | /usr/bin/head -12 \
+            | /usr/bin/sed "s/^/$ts DNS scutil:/"
+        fi
+      else
+        dns_incident=0
+      fi
 
       # Watchdog: count consecutive wedge-signature ticks; anything else
       # (healthy tunnel OR direct path also down) resets the counter.
