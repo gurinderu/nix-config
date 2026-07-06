@@ -72,11 +72,6 @@ in
             "${home}/.headroom/memory.db"
             "--log-file"
             "${home}/.headroom/requests.jsonl"
-            # Make headroom use the code graph: it shells out to the
-            # codebase-memory-mcp binary on PATH. NOTE: its live-reindex watcher
-            # binds to the service cwd (a global agent's cwd is not a repo root),
-            # so it reuses whatever is already indexed rather than auto-reindexing.
-            "--code-graph"
           ];
           RunAtLoad = true;
           KeepAlive = true;
@@ -103,8 +98,12 @@ in
           # --memory-db-path pins the storage root so per-project DBs
           # (memories/projects/<name>-<hash>/memory.db) don't depend on the cwd.
           StateDirectory = "headroom";
-          # --code-graph: headroom shells out to codebase-memory-mcp on PATH.
-          ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl --code-graph";
+          # NOTE: no --code-graph here. On a global always-on proxy its cwd is /,
+          # and headroom's code-graph watcher has no project-root override, so it
+          # recursively watches / and fires `index_repository {"repo_path":"/"}`.
+          # Code-graph is served instead by the direct Claude Code MCP (which runs
+          # codebase-memory-mcp per-project in the repo cwd) + the UI daemon.
+          ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl";
           Restart = "on-failure";
           RestartSec = 5;
         };
