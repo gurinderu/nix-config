@@ -81,6 +81,11 @@ in
             HOME = home;
             # First run downloads the Kompress ONNX model into ~/.cache/huggingface.
             PATH = "/etc/profiles/per-user/${config.home.username}/bin:/run/current-system/sw/bin:/usr/bin:/bin";
+            # Output shaper: trim model output tokens toward the learned verbosity
+            # level. HOLDOUT keeps ~20% of requests unshaped for an honest A/B
+            # ("measured") number in `headroom output-savings`.
+            HEADROOM_OUTPUT_SHAPER = "1";
+            HEADROOM_OUTPUT_HOLDOUT = "20";
           };
           StandardOutPath = "${home}/Library/Logs/headroom.log";
           StandardErrorPath = "${home}/Library/Logs/headroom.log";
@@ -98,6 +103,12 @@ in
           # --memory-db-path pins the storage root so per-project DBs
           # (memories/projects/<name>-<hash>/memory.db) don't depend on the cwd.
           StateDirectory = "headroom";
+          # Output shaper (trim output tokens to the learned verbosity level);
+          # HOLDOUT keeps ~20% unshaped for an honest A/B "measured" number.
+          Environment = [
+            "HEADROOM_OUTPUT_SHAPER=1"
+            "HEADROOM_OUTPUT_HOLDOUT=20"
+          ];
           # NOTE: no --code-graph here. On a global always-on proxy its cwd is /,
           # and headroom's code-graph watcher has no project-root override, so it
           # recursively watches / and fires `index_repository {"repo_path":"/"}`.
