@@ -30,7 +30,12 @@ in
     Unit.Description = "Headroom — local context-compression proxy for Claude Code";
     Service = {
       Type = "simple";
-      ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2";
+      # Persistent per-project memory (SQLite) + JSONL request log both live under
+      # the service state dir (~/.local/state/headroom), which systemd creates for
+      # us via StateDirectory. --memory-db-path pins the storage root so per-project
+      # DBs (memories/projects/<name>-<hash>/memory.db) don't depend on the cwd.
+      StateDirectory = "headroom";
+      ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl";
       Restart = "on-failure";
       RestartSec = 5;
     };
