@@ -3,6 +3,10 @@
 # programs on top. Only `pkgs` is required here (no unstable), so it works
 # under both nix-darwin and NixOS without extra specialArgs wiring.
 { pkgs, ... }:
+let
+  # Code-intelligence MCP server on PATH (UI variant). See pkgs/codebase-memory-mcp.
+  codebase-memory-mcp = pkgs.callPackage ../../pkgs/codebase-memory-mcp { };
+in
 {
   programs.home-manager.enable = true;
   programs.starship = import ./starship.nix;
@@ -43,5 +47,6 @@
     mc
     nixd
     pkg-config
+    codebase-memory-mcp
   ];
 }
