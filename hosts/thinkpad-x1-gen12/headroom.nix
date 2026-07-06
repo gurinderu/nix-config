@@ -35,7 +35,10 @@ in
       # us via StateDirectory. --memory-db-path pins the storage root so per-project
       # DBs (memories/projects/<name>-<hash>/memory.db) don't depend on the cwd.
       StateDirectory = "headroom";
-      ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl";
+      # --mode cache: freeze prior turns to maximise Anthropic prefix-cache hits
+      # (cache savings dominate compression ~50:1 in /stats). Reversible; measure
+      # via /stats before/after.
+      ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --mode cache --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl";
       Restart = "on-failure";
       RestartSec = 5;
     };

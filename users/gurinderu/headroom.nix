@@ -57,6 +57,10 @@ in
         "--port"
         "8788"
         "--no-http2"
+        # cache mode: freeze prior turns to maximise Anthropic prefix-cache hits
+        # (cache savings dominate compression ~50:1 in /stats). Reversible.
+        "--mode"
+        "cache"
         # Persistent per-project memory + JSONL request log under ~/.headroom.
         # --memory-db-path pins the storage root; per-project DBs land under
         # memories/projects/<name>-<hash>/memory.db, so no cross-project bleed.
