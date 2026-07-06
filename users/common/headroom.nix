@@ -82,10 +82,11 @@ in
             # First run downloads the Kompress ONNX model into ~/.cache/huggingface.
             PATH = "/etc/profiles/per-user/${config.home.username}/bin:/run/current-system/sw/bin:/usr/bin:/bin";
             # Output shaper: trim model output tokens toward the learned verbosity
-            # level. HOLDOUT keeps ~20% of requests unshaped for an honest A/B
-            # ("measured") number in `headroom output-savings`.
+            # level. HOLDOUT is a FRACTION in [0,1] (not a percent): 0.2 keeps ~20%
+            # of conversations unshaped for an honest A/B ("measured") number in
+            # `headroom output-savings`. A value >= 1 sends everything to control.
             HEADROOM_OUTPUT_SHAPER = "1";
-            HEADROOM_OUTPUT_HOLDOUT = "20";
+            HEADROOM_OUTPUT_HOLDOUT = "0.2";
           };
           StandardOutPath = "${home}/Library/Logs/headroom.log";
           StandardErrorPath = "${home}/Library/Logs/headroom.log";
@@ -104,10 +105,11 @@ in
           # (memories/projects/<name>-<hash>/memory.db) don't depend on the cwd.
           StateDirectory = "headroom";
           # Output shaper (trim output tokens to the learned verbosity level);
-          # HOLDOUT keeps ~20% unshaped for an honest A/B "measured" number.
+          # HOLDOUT is a FRACTION in [0,1]: 0.2 keeps ~20% unshaped for an honest
+          # A/B "measured" number (>= 1 would send everything to control).
           Environment = [
             "HEADROOM_OUTPUT_SHAPER=1"
-            "HEADROOM_OUTPUT_HOLDOUT=20"
+            "HEADROOM_OUTPUT_HOLDOUT=0.2"
           ];
           # NOTE: no --code-graph here. On a global always-on proxy its cwd is /,
           # and headroom's code-graph watcher has no project-root override, so it
