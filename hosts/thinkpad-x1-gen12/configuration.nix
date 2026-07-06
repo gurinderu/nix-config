@@ -170,7 +170,6 @@
       imports = [
         ../../users/common/home.nix
         ./opencode.nix
-        ./headroom.nix
       ];
       # Common dev tools + zsh/git/neovim/starship/direnv/zellij come from
       # ../../users/common/home.nix. Only thinkpad-specific packages live here.

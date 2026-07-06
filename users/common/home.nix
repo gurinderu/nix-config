@@ -8,6 +8,11 @@ let
   codebase-memory-mcp = pkgs.callPackage ../../pkgs/codebase-memory-mcp { };
 in
 {
+  imports = [
+    ./headroom.nix
+    ./codebase-memory-ui.nix
+  ];
+
   programs.home-manager.enable = true;
   programs.starship = import ./starship.nix;
   programs.zsh = import ./zsh.nix;
