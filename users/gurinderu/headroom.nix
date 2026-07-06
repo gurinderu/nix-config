@@ -31,6 +31,10 @@ in
 {
   home.packages = [ headroom ];
 
+  # launchd won't mkdir for us, so ensure ~/.headroom exists for the memory DB
+  # and the JSONL request log the agent writes below.
+  home.file.".headroom/.keep".text = "";
+
   # Global routing for interactive shells. Override per-invocation any time, e.g.
   # `ANTHROPIC_BASE_URL= claude` to bypass, or `ANTHROPIC_MODEL=… claude`.
   home.sessionVariables = {
@@ -53,6 +57,14 @@ in
         "--port"
         "8788"
         "--no-http2"
+        # Persistent per-project memory + JSONL request log under ~/.headroom.
+        # --memory-db-path pins the storage root; per-project DBs land under
+        # memories/projects/<name>-<hash>/memory.db, so no cross-project bleed.
+        "--memory"
+        "--memory-db-path"
+        "${config.home.homeDirectory}/.headroom/memory.db"
+        "--log-file"
+        "${config.home.homeDirectory}/.headroom/requests.jsonl"
       ];
       RunAtLoad = true;
       KeepAlive = true;
