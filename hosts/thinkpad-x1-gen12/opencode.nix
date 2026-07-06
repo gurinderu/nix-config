@@ -52,6 +52,9 @@ in
     Install.WantedBy = [ "default.target" ];
   };
 
+  # claude-code routed through the local Headroom proxy via the global
+  # ANTHROPIC_BASE_URL in ./headroom.nix; meridian references it by pinned store
+  # path above and is unaffected (systemd service, no shell session vars).
   home.packages = [
     meridian
     pkgsUnstable.opencode

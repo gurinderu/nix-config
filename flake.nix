@@ -34,6 +34,27 @@
     # surface, so consumers wire the service themselves (launchd on mac, a
     # systemd user unit on the thinkpad).
     meridian.url = "github:gurinderu/meridian";
+    # Headroom: local context-compression proxy that sits in front of the
+    # interactive `claude` CLI (ANTHROPIC_BASE_URL) and shrinks tool-result
+    # payloads before they hit api.anthropic.com. Unlike Meridian it is a
+    # Python/maturin package (not on nixpkgs), so we pin its full wheel closure
+    # in pkgs/headroom/uv.lock and build it reproducibly with uv2nix. These
+    # three inputs are the uv2nix toolchain; they only feed pkgs/headroom.
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # craft: personal Claude Code / opencode engineering skills, review agents,
     # and audit/triage workflows. Not a Nix flake (flake = false) — we consume
     # the repo tree as a store path and symlink its opencode adapter into
@@ -74,6 +95,17 @@
     {
       formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-tree;
       formatter.x86_64-linux = nixpkgs.legacyPackages.x86_64-linux.nixfmt-tree;
+
+      # Reproducible Headroom proxy (uv2nix). Exposed per-host so the launchd
+      # agent / systemd unit can reference it and so `nix build .#headroom` works.
+      packages.aarch64-darwin.headroom = import ./pkgs/headroom {
+        pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+        inherit inputs;
+      };
+      packages.x86_64-linux.headroom = import ./pkgs/headroom {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        inherit inputs;
+      };
 
       darwinConfigurations."mac_aarch64" = import ./hosts/mac_aarch64 {
         inherit
