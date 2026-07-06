@@ -15,9 +15,11 @@
 # Claude Code owns its OAuth (Keychain / credential store); the proxy forwards
 # the auth header untouched, so no key lives here. ANTHROPIC_MODEL carries the
 # [1m] suffix because Claude Code drops the 1M window behind a custom base URL
-# otherwise (headroom issue #1158). --mode cache freezes prior turns to maximise
-# Anthropic prefix-cache hits (cache savings dominate compression ~50:1). HTTP/1.1
-# to upstream (--no-http2) avoids SSLV3_ALERT_BAD_RECORD_MAC on the many streams
+# otherwise (headroom issue #1158). We stay on the default token mode: it both
+# compresses AND adaptively freezes prefixes to protect Anthropic's native prompt
+# cache, so it strictly beats --mode cache (which just disables compression while
+# the cache savings — being Anthropic-native — happen either way). HTTP/1.1 to
+# upstream (--no-http2) avoids SSLV3_ALERT_BAD_RECORD_MAC on the many streams
 # Claude Code cancels (Esc to interrupt). --memory turns on persistent
 # per-project memory (sqlite-vec, one DB per workspace), and --memory-db-path
 # pins the storage root so per-project DBs don't depend on the service cwd.
@@ -65,8 +67,6 @@ in
             "--port"
             "8788"
             "--no-http2"
-            "--mode"
-            "cache"
             "--memory"
             "--memory-db-path"
             "${home}/.headroom/memory.db"
@@ -104,7 +104,7 @@ in
           # (memories/projects/<name>-<hash>/memory.db) don't depend on the cwd.
           StateDirectory = "headroom";
           # --code-graph: headroom shells out to codebase-memory-mcp on PATH.
-          ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --mode cache --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl --code-graph";
+          ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl --code-graph";
           Restart = "on-failure";
           RestartSec = 5;
         };
