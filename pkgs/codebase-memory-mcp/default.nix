@@ -13,6 +13,7 @@
   stdenv,
   fetchurl,
   autoPatchelfHook,
+  zlib,
 }:
 let
   version = "0.8.1";
@@ -42,10 +43,16 @@ stdenv.mkDerivation {
   # Tarball extracts several files at the top level, not into a single dir.
   sourceRoot = ".";
 
-  # Insurance on NixOS: the release advertises a self-contained static binary,
-  # so autoPatchelf is a no-op there — but if a dynamic NEEDED slips in, it gets
-  # patched instead of failing to run. Darwin needs neither.
+  # The -ui Linux release is NOT static: it dynamically links libstdc++.so.6,
+  # libgcc_s.so.1 (both from the C++ runtime, stdenv.cc.cc.lib) and libz.so.1
+  # (zlib). autoPatchelfHook rewrites the NEEDED entries against these; without
+  # them on buildInputs it aborts with "could not satisfy dependency". Darwin
+  # needs neither the hook nor the libs.
   nativeBuildInputs = lib.optionals stdenv.isLinux [ autoPatchelfHook ];
+  buildInputs = lib.optionals stdenv.isLinux [
+    stdenv.cc.cc.lib
+    zlib
+  ];
 
   dontConfigure = true;
   dontBuild = true;
