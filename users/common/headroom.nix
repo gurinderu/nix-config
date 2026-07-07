@@ -20,9 +20,27 @@
 # cache, so it strictly beats --mode cache (which just disables compression while
 # the cache savings — being Anthropic-native — happen either way). HTTP/1.1 to
 # upstream (--no-http2) avoids SSLV3_ALERT_BAD_RECORD_MAC on the many streams
-# Claude Code cancels (Esc to interrupt). --memory turns on persistent
-# per-project memory (sqlite-vec, one DB per workspace), and --memory-db-path
-# pins the storage root so per-project DBs don't depend on the service cwd.
+# Claude Code cancels (Esc to interrupt).
+#
+# --no-rate-limit: headroom's default TokenBucketRateLimiter (60 req/min,
+# 100k tok/min) fast-fails bursts with a LOCAL 429 (never reaching Anthropic)
+# to smooth traffic. Parallel workflow fan-outs (dozens of subagents, ~76k
+# tokens each) blow that bucket in seconds and every shed request surfaces as
+# "API Error: 429" in Claude Code — with zero real 429s from Anthropic. We do
+# our own pacing, so disable the local bucket and let requests hit Anthropic
+# directly (the real 5h/weekly subscription limits still apply upstream).
+#
+# --memory REMOVED: its server-side retrieval (headroom_retrieve) forced every
+# stream:true request into a buffered stream:false upstream call. On large Opus
+# outputs (20k+ tokens) that meant 200-300s of a silent connection, which
+# upstream/idle timeouts reset mid-flight — surfacing as "Connection closed
+# mid-response" and a doom-loop of failing retries (each retry re-ran the whole
+# 300s generation). It also injected the memory tools into the cached prefix,
+# busting Anthropic's native prompt cache (~1.5M cache tokens/day re-sent as
+# fresh input) and so tripping the subscription's short-term rate limit (429
+# "Server is temporarily limiting requests"). Persistent memory wasn't even
+# resolving per-project here (memory_project_unresolved -> empty), so we paid
+# the buffering cost for nothing. Dropped until it can stream.
 {
   inputs,
   pkgs,
@@ -52,8 +70,8 @@ in
     }
 
     (lib.mkIf pkgs.stdenv.isDarwin {
-      # launchd won't mkdir for us, so ensure ~/.headroom exists for the memory
-      # DB and the JSONL request log the agent writes.
+      # launchd won't mkdir for us, so ensure ~/.headroom exists for the JSONL
+      # request log the agent writes.
       home.file.".headroom/.keep".text = "";
 
       launchd.agents.headroom = {
@@ -67,9 +85,7 @@ in
             "--port"
             "8788"
             "--no-http2"
-            "--memory"
-            "--memory-db-path"
-            "${home}/.headroom/memory.db"
+            "--no-rate-limit"
             "--log-file"
             "${home}/.headroom/requests.jsonl"
           ];
@@ -99,10 +115,8 @@ in
         Unit.Description = "Headroom — local context-compression proxy for Claude Code";
         Service = {
           Type = "simple";
-          # Memory DB + JSONL request log live under the service state dir
+          # JSONL request log lives under the service state dir
           # (~/.local/state/headroom), created by systemd via StateDirectory.
-          # --memory-db-path pins the storage root so per-project DBs
-          # (memories/projects/<name>-<hash>/memory.db) don't depend on the cwd.
           StateDirectory = "headroom";
           # Output shaper (trim output tokens to the learned verbosity level);
           # HOLDOUT is a FRACTION in [0,1]: 0.2 keeps ~20% unshaped for an honest
@@ -116,7 +130,7 @@ in
           # recursively watches / and fires `index_repository {"repo_path":"/"}`.
           # Code-graph is served instead by the direct Claude Code MCP (which runs
           # codebase-memory-mcp per-project in the repo cwd) + the UI daemon.
-          ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --memory --memory-db-path %S/headroom/memory.db --log-file %S/headroom/requests.jsonl";
+          ExecStart = "${headroom}/bin/headroom proxy --host 127.0.0.1 --port 8788 --no-http2 --no-rate-limit --log-file %S/headroom/requests.jsonl";
           Restart = "on-failure";
           RestartSec = 5;
         };
