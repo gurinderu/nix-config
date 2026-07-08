@@ -38,9 +38,7 @@
       pkgs.sing-box
       pkgs.hwloc
       # Claude Code from unstable (stable lags far behind its near-daily
-      # releases). Routed through the local Headroom proxy via the global
-      # ANTHROPIC_BASE_URL in ./headroom.nix. The in-store auto-updater is
-      # disabled; bump via nix.
+      # releases). The in-store auto-updater is disabled; bump via nix.
       pkgs-unstable.claude-code
       #pkgs-unstable.warp-terminal
     ];

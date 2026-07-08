@@ -36,11 +36,11 @@
     "craft": {
       "flake": false,
       "locked": {
-        "lastModified": 1782303971,
-        "narHash": "sha256-AJbrtjfFcVPtmcWMFbzGy9f7clcFk/+3xENikzWVY2U=",
+        "lastModified": 1783498704,
+        "narHash": "sha256-9o+SzIMN/UPmv1UxNV4i91XyIV3fCxXh4mZMvs8Xeo0=",
         "owner": "gurinderu",
         "repo": "craft",
-        "rev": "dc77b0155501673764f04c8afb032761ed956105",
+        "rev": "6358b350c1daeb15d2372ce5a8f7341be098aecb",
         "type": "github"
       },
       "original": {
@@ -74,11 +74,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1781981105,
-        "narHash": "sha256-/1nNBbA7PrSQpTc9Qazkhl4kIPg+TNl0CjxS3UQJKlw=",
+        "lastModified": 1783221248,
+        "narHash": "sha256-ESQnuNHEDChsB4IxoLRhscVahqkDWkTb+qdIz8euYt4=",
         "owner": "nix-community",
         "repo": "home-manager",
-        "rev": "7bfff44b465909f69a442701293bc0badcf476dc",
+        "rev": "af2beae5f0fae0a4310cc0e6aef2572f56090353",
         "type": "github"
       },
       "original": {
@@ -107,11 +107,11 @@
     "homebrew-cask": {
       "flake": false,
       "locked": {
-        "lastModified": 1782385650,
-        "narHash": "sha256-yLpJP1Q4PQ05tw7xIsgt6csVxkzS8zDaDy/Blxc/BKE=",
+        "lastModified": 1783493919,
+        "narHash": "sha256-DNS7bI8YGxLNKmaadAFL6FoUPLjPoXFZZ4E9Fyfec4c=",
         "owner": "homebrew",
         "repo": "homebrew-cask",
-        "rev": "d7162ddfd9c6e29a121d2b2072293beb3c00f1ce",
+        "rev": "c6492396b87639cf0a309997e59ba315b46989ed",
         "type": "github"
       },
       "original": {
@@ -123,11 +123,11 @@
     "homebrew-core": {
       "flake": false,
       "locked": {
-        "lastModified": 1782383559,
-        "narHash": "sha256-RXaz+ESaoSr5bIFpxleCUlPeYfKzwX3SURXPCdndDZ0=",
+        "lastModified": 1783495115,
+        "narHash": "sha256-yr/ACj/rXmUFEEOe9K95fuTCW7ne7lK45gbRMvUYc+g=",
         "owner": "homebrew",
         "repo": "homebrew-core",
-        "rev": "332d017b7f1294b17bf7c049000e08adc4bb69dc",
+        "rev": "550695d58c1a1cebae3370f131ff0a3271bea288",
         "type": "github"
       },
       "original": {
@@ -247,11 +247,11 @@
     },
     "nixpkgs-unstable": {
       "locked": {
-        "lastModified": 1782175435,
-        "narHash": "sha256-EMzXKmnOtBQ2MnvpiNOm7E+kOMvdPrIKaeg52Tip2Uk=",
+        "lastModified": 1783279667,
+        "narHash": "sha256-/NAkDSsve+GNM0Bt6tleJdCGfsTlK89nPjkVOzZMo0s=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "89570f24e97e614aa34aa9ab1c927b6578a43775",
+        "rev": "f205b5574fd0cb7da5b702a2da51507b7f4fdd1b",
         "type": "github"
       },
       "original": {
@@ -263,63 +263,17 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1782233679,
-        "narHash": "sha256-QyuGP5+QOtmXpy4i2X4DhBVBaySBdDKQEhqKcphcp34=",
+        "lastModified": 1783389287,
+        "narHash": "sha256-0xIy4dVLqq47rA+mRy0hXDfjhQd4E5PoIns/RmB7nR4=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "667d5cf1c59585031d743c78b394b0a647537c35",
+        "rev": "0ad6f47ea4fe188f4bc8f0380f93ae8523337c6c",
         "type": "github"
       },
       "original": {
         "owner": "NixOS",
         "ref": "nixos-26.05",
         "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "pyproject-build-systems": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ],
-        "pyproject-nix": [
-          "pyproject-nix"
-        ],
-        "uv2nix": [
-          "uv2nix"
-        ]
-      },
-      "locked": {
-        "lastModified": 1782093830,
-        "narHash": "sha256-6gmEVe69+KlRkZD4PEEV5xAlB9CB0Y9TiuEgQjDrKTQ=",
-        "owner": "pyproject-nix",
-        "repo": "build-system-pkgs",
-        "rev": "430680a19bc85a3bda55f12e4cc1a1aadcf2e478",
-        "type": "github"
-      },
-      "original": {
-        "owner": "pyproject-nix",
-        "repo": "build-system-pkgs",
-        "type": "github"
-      }
-    },
-    "pyproject-nix": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1782905613,
-        "narHash": "sha256-SvXJcAemihifkTn4BGvyE5K1FJX9bl4U8DQ5pqKvD0s=",
-        "owner": "pyproject-nix",
-        "repo": "pyproject.nix",
-        "rev": "7af23cfe91064865ecf2e835da28b45b3c6f49fd",
-        "type": "github"
-      },
-      "original": {
-        "owner": "pyproject-nix",
-        "repo": "pyproject.nix",
         "type": "github"
       }
     },
@@ -336,10 +290,7 @@
         "nix-homebrew": "nix-homebrew",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-unstable": "nixpkgs-unstable",
-        "pyproject-build-systems": "pyproject-build-systems",
-        "pyproject-nix": "pyproject-nix",
         "sops-nix": "sops-nix",
-        "uv2nix": "uv2nix",
         "verstak": "verstak"
       }
     },
@@ -371,11 +322,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1782165805,
-        "narHash": "sha256-478kKQBvK6SYTOdN2h9jhKJv94nbXRbFMfuL1WshErg=",
+        "lastModified": 1783174389,
+        "narHash": "sha256-aCWC8ngycU7OdJrU2+Je3qf+1a2ykuBvpPhZT/9tXMc=",
         "owner": "Mic92",
         "repo": "sops-nix",
-        "rev": "56b24064fdcaedca53553b1a6d607fd23b613a24",
+        "rev": "f1406619a3884cd5c47992a70b8b35c9c0fcb4c9",
         "type": "github"
       },
       "original": {
@@ -399,37 +350,14 @@
         "type": "github"
       }
     },
-    "uv2nix": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ],
-        "pyproject-nix": [
-          "pyproject-nix"
-        ]
-      },
-      "locked": {
-        "lastModified": 1783307743,
-        "narHash": "sha256-oseisp2tblvzYZdojkA5URLnMjrpPiemzr5T7BdUyuU=",
-        "owner": "pyproject-nix",
-        "repo": "uv2nix",
-        "rev": "288b0a580ede39d3d7f96e3d835f9df0a7080223",
-        "type": "github"
-      },
-      "original": {
-        "owner": "pyproject-nix",
-        "repo": "uv2nix",
-        "type": "github"
-      }
-    },
     "verstak": {
       "flake": false,
       "locked": {
-        "lastModified": 1782383830,
-        "narHash": "sha256-NntVq3efY8LO1ExiPgxXsMT/bHBEggIxxbe/BNLve9U=",
+        "lastModified": 1783091120,
+        "narHash": "sha256-M6V0rdeUSfWKm8JQ9dXUV7lZpsWfbWssTHWuS3UjemU=",
         "owner": "verstak-ai",
         "repo": "skills",
-        "rev": "fabbf1903c867e9f97d23d12f514ba4690d79418",
+        "rev": "69a6304ea44984e934d627de89ba5252706baa78",
         "type": "github"
       },
       "original": {
