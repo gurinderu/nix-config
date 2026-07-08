@@ -9,7 +9,6 @@ let
 in
 {
   imports = [
-    ./headroom.nix
     ./codebase-memory-ui.nix
   ];
 

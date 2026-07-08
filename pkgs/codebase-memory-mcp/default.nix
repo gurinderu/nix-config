@@ -1,10 +1,9 @@
 # codebase-memory-mcp — code-intelligence MCP server (DeusData), UI variant.
 #
 # Prebuilt release binary from GitHub (single self-contained binary with the
-# graph-visualisation UI baked in; headroom's own `--code-graph` shells out to
-# the very same `codebase-memory-mcp` binary, so putting this on PATH lets both
-# a direct Claude Code MCP registration and headroom reuse one binary + one
-# on-disk graph cache (~/.cache/codebase-memory-mcp)).
+# graph-visualisation UI baked in). Putting this on PATH lets a direct Claude
+# Code MCP registration use one binary + one on-disk graph cache
+# (~/.cache/codebase-memory-mcp).
 #
 # The upstream tarball holds {codebase-memory-mcp, LICENSE, install.sh,
 # THIRD_PARTY_NOTICES.md} at the top level — we install just the binary.
