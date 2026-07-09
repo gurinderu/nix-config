@@ -10,6 +10,7 @@ in
 {
   imports = [
     ./codebase-memory-ui.nix
+    ./rtk.nix
   ];
 
   programs.home-manager.enable = true;
