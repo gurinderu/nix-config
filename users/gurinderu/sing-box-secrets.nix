@@ -14,7 +14,28 @@
     2
     3
     4
+    5
+    6
+    7
+    8
   ];
+
+  # Per-server VLESS transport (structural, NOT secret — the server IP/keys are
+  # the sensitive bits and stay in sops). "tcp" is XTLS-Reality with
+  # flow=xtls-rprx-vision; "grpc" is Reality over gRPC (gun) with no flow.
+  # Consumed by mkVless in sing-box-config.nix. Indices absent here default to
+  # "tcp". sing-box 1.13 has no xhttp transport, so the subscription's two xhttp
+  # nodes are intentionally omitted (their IPs are covered by the grpc nodes).
+  transports = {
+    "1" = "tcp"; # 🇩🇪 Germany 1        94.103.168.85:443
+    "2" = "grpc"; # 🇩🇪 Germany 2        94.103.168.85:2053
+    "3" = "grpc"; # 🇩🇪 Germany 3        94.103.168.145:2053
+    "4" = "tcp"; # 🇵🇱 Poland 1         81.15.150.138:443
+    "5" = "grpc"; # 🇵🇱 Poland 2         81.15.150.138:2053
+    "6" = "grpc"; # 🇵🇱 Poland 3         81.15.150.144:2053
+    "7" = "tcp"; # 🇩🇪 Germany bridge 1 158.160.251.55:443 (Yandex Cloud / RU exit)
+    "8" = "tcp"; # foreign exit         194.87.208.142:443 (kept, not in subscription)
+  };
 
   # sops key field -> placeholder token stem (the SING_BOX_<STEM>_N form emitted
   # by mkVless in sing-box-config.nix). The 1-based index suffix _N is appended

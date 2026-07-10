@@ -54,44 +54,79 @@
   logLevel ? "warn",
 }:
 let
+  # Per-server transport map (structural, non-secret). See sing-box-secrets.nix.
+  transports = (import ./sing-box-secrets.nix).transports;
+
   # One VLESS+Reality outbound per backend server. Hosts substitute the
-  # SING_BOX_*_N tokens with decrypted sops secrets at activation time.
-  mkVless = n: {
-    type = "vless";
-    tag = "vless-out-${toString n}";
-    server = "SING_BOX_SERVER_${toString n}";
-    server_port = "SING_BOX_PORT_${toString n}";
-    uuid = "SING_BOX_UUID_${toString n}";
-    flow = "xtls-rprx-vision";
-    # network is left at its default (tcp+udp) so UDP is carried over VLESS via
-    # packet_encoding=xudp below. With network="tcp" the outbound dropped all
-    # UDP, so anything UDP routed here failed with urltest "missing supported
-    # outbound" (WebRTC/games/STUN never worked). QUIC and udp:443 are still
-    # rejected at the route level (to force TLS sniffing over TCP); only other
-    # UDP now actually flows through the proxy.
-    packet_encoding = "xudp";
-    tls = {
-      enabled = true;
-      server_name = "SING_BOX_SERVER_NAME_${toString n}";
-      alpn = [
-        "h2"
-        "http/1.1"
-      ];
-      utls = {
+  # SING_BOX_*_N tokens with decrypted sops secrets at activation time. The
+  # transport (tcp XTLS-Vision vs gRPC/gun) is selected per index from the
+  # shared transports map so both render paths stay in sync.
+  mkVless =
+    n:
+    let
+      transport = transports.${toString n} or "tcp";
+      isGrpc = transport == "grpc";
+    in
+    {
+      type = "vless";
+      tag = "vless-out-${toString n}";
+      server = "SING_BOX_SERVER_${toString n}";
+      server_port = "SING_BOX_PORT_${toString n}";
+      uuid = "SING_BOX_UUID_${toString n}";
+      # network is left at its default (tcp+udp) so UDP is carried over VLESS via
+      # packet_encoding=xudp below. With network="tcp" the outbound dropped all
+      # UDP, so anything UDP routed here failed with urltest "missing supported
+      # outbound" (WebRTC/games/STUN never worked). QUIC and udp:443 are still
+      # rejected at the route level (to force TLS sniffing over TCP); only other
+      # UDP now actually flows through the proxy.
+      packet_encoding = "xudp";
+      tls = {
         enabled = true;
-        # Anti-DPI: chrome uTLS became a proxy marker (obfuscation tools all
-        # standardize on it), so JA3/JA4-based DPI flags it. firefox is a
-        # "licit"/whitelisted fingerprint — breaks Signal 2 of the 3-signal
-        # (ASN + JA3 + frequency) throttling conjunction.
-        fingerprint = "firefox";
-      };
-      reality = {
-        enabled = true;
-        public_key = "SING_BOX_PUBLIC_KEY_${toString n}";
-        short_id = "SING_BOX_SHORT_ID_${toString n}";
-      };
-    };
-  };
+        server_name = "SING_BOX_SERVER_NAME_${toString n}";
+        utls = {
+          enabled = true;
+          # Anti-DPI: chrome uTLS became a proxy marker (obfuscation tools all
+          # standardize on it), so JA3/JA4-based DPI flags it. firefox is a
+          # "licit"/whitelisted fingerprint — breaks Signal 2 of the 3-signal
+          # (ASN + JA3 + frequency) throttling conjunction.
+          fingerprint = "firefox";
+        };
+        reality = {
+          enabled = true;
+          public_key = "SING_BOX_PUBLIC_KEY_${toString n}";
+          short_id = "SING_BOX_SHORT_ID_${toString n}";
+        };
+      }
+      # ALPN h2/http1.1 is set only for the plain-TCP (XTLS-Vision) outbounds.
+      # The gRPC transport negotiates h2 itself, so it must not carry an
+      # http/1.1 ALPN in the (fake) outer handshake.
+      // (
+        if isGrpc then
+          { }
+        else
+          {
+            alpn = [
+              "h2"
+              "http/1.1"
+            ];
+          }
+      );
+    }
+    // (
+      if isGrpc then
+        {
+          # Reality over gRPC (Xray "gun" mode). No flow: xtls-rprx-vision is
+          # only valid on the raw-TCP transport.
+          transport = {
+            type = "grpc";
+            service_name = "grpc";
+          };
+        }
+      else
+        {
+          flow = "xtls-rprx-vision";
+        }
+    );
 in
 {
   log = {
@@ -158,10 +193,17 @@ in
         server = "local";
       }
       {
-        # Russian sites resolve locally so they get real IPs and connect
-        # directly (no fakeip, no proxy).
+        # Russian sites must resolve to REAL IPs (not fakeip) so the route rule
+        # can send them out direct-out, bypassing the proxy. They cannot use the
+        # `local` resolver here: on macOS the system DNS is the sing-box TUN
+        # itself (172.19.0.1), so `type: local` loops back into sing-box and
+        # every RU lookup dies with "i/o timeout" / "no servers could be
+        # reached" — which broke all RU domains while fakeip traffic kept
+        # working. Resolve them over the google DoH server instead (reached via
+        # the proxy); it returns real routable IPs and the geosite-category-ru
+        # route rule still forces the actual connection out direct.
         rule_set = [ "geosite-category-ru" ];
-        server = "local";
+        server = "google";
       }
       {
         # Tailscale control plane / DERP must resolve to REAL IPs (not fakeip)
@@ -237,26 +279,33 @@ in
       type = "block";
       tag = "block-out";
     }
-    (mkVless 1)
-    (mkVless 2)
-    # vless-out-3 is a Russia-located exit (Yandex Cloud). It IS a member of the
-    # urltest group below, but only as a last-resort fallback: urltest probes
-    # every member against https://www.gstatic.com/generate_204 (a Google host),
-    # which is throttled/slow through a Russian egress, so node 3 measures the
-    # highest latency and never wins while any foreign exit (1, 2, 4) is up. It
-    # is picked only when all foreign exits are down — keeping connectivity up
+    # Foreign exits from the niao subscription. 1/4 are XTLS-Vision (raw TCP),
+    # 2/3/5/6 are Reality-over-gRPC — the transport is chosen per index from the
+    # transports map in sing-box-secrets.nix.
+    (mkVless 1) # 🇩🇪 Germany 1 (tcp)
+    (mkVless 2) # 🇩🇪 Germany 2 (grpc)
+    (mkVless 3) # 🇩🇪 Germany 3 (grpc)
+    (mkVless 4) # 🇵🇱 Poland 1 (tcp)
+    (mkVless 5) # 🇵🇱 Poland 2 (grpc)
+    (mkVless 6) # 🇵🇱 Poland 3 (grpc)
+    # vless-out-7 is a Russia-located exit (Yandex Cloud, 158.160.x). It IS a
+    # member of the urltest group below, but only as a last-resort fallback:
+    # urltest probes every member against https://www.gstatic.com/generate_204
+    # (a Google host), which is throttled/slow through a Russian egress, so node
+    # 7 measures the highest latency and never wins while any foreign exit is up.
+    # It is picked only when all foreign exits are down — keeping connectivity up
     # without routing RKN-blocked sites through a Russian egress in normal use.
-    (mkVless 3)
-    # vless-out-4 is another foreign exit (same provider as the others), added as
-    # an extra urltest candidate so the auto group has more than one foreign
-    # backend to fail over between.
-    (mkVless 4)
+    (mkVless 7) # 🇩🇪 Germany bridge 1 (tcp, RU exit)
+    # vless-out-8 is a foreign exit not present in the niao subscription, kept as
+    # an extra urltest candidate so the auto group has more foreign backends to
+    # fail over between.
+    (mkVless 8) # foreign exit 194.87.208.142 (tcp)
     {
       # Route through whichever backend is fastest right now: urltest probes each
       # member on `interval`, picks the lowest-latency one, and fails over
-      # automatically when it slows down or drops. Foreign exits (1, 2, 4) win in
-      # normal use; the RU exit (3) is a latency-penalised last-resort fallback
-      # (see its comment above).
+      # automatically when it slows down or drops. Foreign exits (1,2,3,4,5,6,8)
+      # win in normal use; the RU exit (7) is a latency-penalised last-resort
+      # fallback (see its comment above).
       type = "urltest";
       tag = "vless-auto";
       outbounds = [
@@ -264,6 +313,10 @@ in
         "vless-out-2"
         "vless-out-3"
         "vless-out-4"
+        "vless-out-5"
+        "vless-out-6"
+        "vless-out-7"
+        "vless-out-8"
       ];
       url = "https://www.gstatic.com/generate_204";
       interval = "1m";
