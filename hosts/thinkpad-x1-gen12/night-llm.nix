@@ -133,10 +133,12 @@ in
 
           # Deliver only the report to the PR (host-controlled): agent
           # code-edits never reach it, only REVIEW-FINDINGS.md.
-          ( cd "$work/repo"
+          (
+            set -e
+            cd "$work/repo"
             if [ -f REVIEW-FINDINGS.md ]; then
               git checkout -- . 2>/dev/null || true          # discard any agent edits to tracked files
-              branch="night-review-$(date +%Y%m%d)"
+              branch="night-review-$(date +%Y%m%d-%H%M%S)"
               git checkout -b "$branch"
               git add REVIEW-FINDINGS.md                       # ONLY the report, nothing else
               git -c user.name='night-llm' -c user.email='night-llm@localhost' commit -m 'nightly review findings' </dev/null
