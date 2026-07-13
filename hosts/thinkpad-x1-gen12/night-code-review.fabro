@@ -1,0 +1,15 @@
+digraph NightCodeReview {
+    graph [goal="Review the repository for logic gaps, missed edge cases, and holes in reasoning. Do not modify existing code."]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    review [
+        label="Review",
+        shape=tab,
+        prompt="Review this repository for logic gaps, missed edge cases, and holes in reasoning, following the goal. Do NOT modify existing source files. Use bash to inspect the code, then write a single findings report to a new file named REVIEW-FINDINGS.md at the repo root. Group findings by severity (High/Medium/Low); for each give file:line and a one-paragraph explanation. If you find nothing substantive, say so explicitly in the file."
+    ]
+
+    start -> review -> exit
+}
