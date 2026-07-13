@@ -79,6 +79,7 @@
       # `nix build .#rtk` works and home-manager can reference it.
       packages.aarch64-darwin.rtk = nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/rtk { };
       packages.x86_64-linux.rtk = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/rtk { };
+      packages.x86_64-linux.fabro = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/fabro { };
 
       darwinConfigurations."mac_aarch64" = import ./hosts/mac_aarch64 {
         inherit
@@ -96,6 +97,7 @@
       nixosConfigurations."thinkpad-x1-gen12" = import ./hosts/thinkpad-x1-gen12 {
         inherit
           inputs
+          self
           nixpkgs
           home-manager
           ;
