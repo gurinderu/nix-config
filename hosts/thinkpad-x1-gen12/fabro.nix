@@ -2,8 +2,12 @@
   config,
   self,
   pkgs,
+  lib,
   ...
 }:
+let
+  fabroLib = import ./fabro-lib.nix { inherit self lib; };
+in
 {
   # Dedicated service identity shared by the Fabro server (Task 4) and the
   # nightly batch (Task 5, which drops to this user for `fabro` subcommands).
@@ -11,10 +15,14 @@
     isSystemUser = true;
     group = "fabro";
     home = "/var/lib/fabro";
-    createHome = true;
   };
   users.groups.fabro = { };
 
+  # WARNING: night_llm_repos, night_llm_github_token, and fabro_dev_token MUST
+  # exist in secrets/secrets.yaml (added via `sops` + `sops updatekeys`) BEFORE
+  # `nixos-rebuild switch`, otherwise sops-install-secrets fails the WHOLE host
+  # activation — taking down the runner + dockerhub secrets in the same file,
+  # not just Fabro.
   sops.secrets.night_llm_repos = {
     owner = "fabro";
     group = "fabro";
@@ -49,11 +57,14 @@
 
     [[llm.models]]
     provider = "ollama"
-    api_id   = "hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
+    api_id   = "${fabroLib.modelTag}"
     default  = true
 
     [run.model]
     provider = "ollama"
+
+    [server.sandbox.providers.docker]
+    enabled = true
   '';
 
   systemd.services.fabro = {
@@ -72,7 +83,9 @@
       Environment = [ "HOME=/var/lib/fabro" ];
       # Seed the stable dev-token from sops before the server starts.
       ExecStartPre = "${pkgs.coreutils}/bin/install -Dm400 -o fabro -g fabro ${config.sops.secrets.fabro_dev_token.path} /var/lib/fabro/dev-token";
-      ExecStart = "${self.packages.x86_64-linux.fabro}/bin/fabro server start --bind 127.0.0.1:3000 --web --web-url https://nixos.tail411887.ts.net --storage-dir /var/lib/fabro/storage --config /etc/fabro/settings.toml";
+      # bind + web url come from settings.toml (single authority); only pass
+      # what settings.toml can't express.
+      ExecStart = "${fabroLib.fabroExe} server start --web --storage-dir /var/lib/fabro/storage --config /etc/fabro/settings.toml";
       Restart = "on-failure";
       RestartSec = 5;
     };
