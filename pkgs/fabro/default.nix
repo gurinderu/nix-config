@@ -3,11 +3,10 @@
 # Bun/JS frontend build, so we pin the released musl-static binary instead.
 {
   lib,
-  stdenv,
+  stdenvNoCC,
   fetchurl,
-  autoPatchelfHook,
 }:
-stdenv.mkDerivation rec {
+stdenvNoCC.mkDerivation rec {
   pname = "fabro";
   version = "0.254.0";
 
@@ -18,9 +17,10 @@ stdenv.mkDerivation rec {
 
   sourceRoot = ".";
 
-  # musl build is normally fully static (autoPatchelf becomes a no-op); kept as a
-  # safety net in case the release links the musl loader dynamically.
-  nativeBuildInputs = [ autoPatchelfHook ];
+  # musl release is static; if an on-host build reveals a dynamic loader,
+  # re-add autoPatchelfHook + buildInputs = [ stdenv.cc.cc.lib ].
+  dontConfigure = true;
+  dontBuild = true;
 
   installPhase = ''
     runHook preInstall
@@ -34,5 +34,6 @@ stdenv.mkDerivation rec {
     license = lib.licenses.mit;
     mainProgram = "fabro";
     platforms = [ "x86_64-linux" ];
+    sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
   };
 }
