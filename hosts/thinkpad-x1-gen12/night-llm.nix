@@ -2,7 +2,6 @@
   config,
   self,
   pkgs,
-  lib,
   ...
 }:
 {
@@ -17,6 +16,9 @@
       OLLAMA_MAX_LOADED_MODELS = "1";
     };
   };
+
+  # OOM guard: the ~21 GB model actually lives in ollama's cgroup, not night-llm's.
+  systemd.services.ollama.serviceConfig.MemoryMax = "26G";
 
   # Editable steering prompt; changing it needs no rebuild.
   systemd.tmpfiles.rules = [
@@ -37,7 +39,7 @@
     description = "Nightly Fabro code-review batch on the local model";
     after = [ "fabro.service" "ollama.service" ];
     wants = [ "fabro.service" "ollama.service" ];
-    path = with pkgs; [ coreutils git util-linux systemd ];
+    path = with pkgs; [ coreutils git util-linux systemd bash gnugrep findutils ];
     serviceConfig = {
       Type = "oneshot";
       # Free RAM: stop the runners and make sure the model is present.
@@ -62,7 +64,8 @@
         # Configure Fabro's GitHub token once (for PR creation / private clones).
         runuser -u fabro -- env HOME=/var/lib/fabro \
           ${self.packages.x86_64-linux.fabro}/bin/fabro install github \
-          --strategy token --non-interactive --storage-dir "$storage" <<<"$token" || true
+          --strategy token --non-interactive --storage-dir "$storage" <<<"$token" \
+          >>"$outdir/setup.log" 2>&1 || true
 
         while read -r repo; do
           [ -z "$repo" ] && continue
@@ -79,6 +82,7 @@
         [run]
         goal = """$goal"""
         EOF
+          chown -R fabro:fabro "$work"
           (
             cd "$work/repo"
             runuser -u fabro -- env HOME=/var/lib/fabro \
@@ -97,7 +101,6 @@
         OLLAMA_HOST=127.0.0.1:11434 ${pkgs.ollama}/bin/ollama stop 'hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M' || true
         systemctl start github-runner-warp-1 github-runner-warp-2 github-runner-warp-3 || true
       '';
-      MemoryMax = "26G";
       Nice = 10;
       TimeoutStartSec = "4h";
     };
