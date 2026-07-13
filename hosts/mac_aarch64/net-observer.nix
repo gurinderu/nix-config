@@ -234,6 +234,54 @@ let
       /usr/bin/awk '/^nameserver/ { ns = ns " " $2 } END { print "dns:" ns }' /etc/resolv.conf 2>/dev/null
     }
 
+    # Compact one-line snapshot of the link/DHCP layer that the TICK probes do
+    # not record: the gateway's ARP entry (empty/incomplete = L2 is dead, the
+    # coworking-MikroTik failure signature) and the DHCP router/DNS from the
+    # lease. Logged by the caller only when it changes (see the NET block), so
+    # the log carries a timeline of L2 state — the state just before a gw drop
+    # is the last NET line above the GWD dump. Args: iface gw link ip ssid.
+    link_snapshot() {
+      local gwmac pkt dhcp_router dhcp_dns
+      if [ -n "$2" ]; then
+        gwmac=$(/usr/sbin/arp -n "$2" 2>/dev/null | /usr/bin/sed -n 's/.* at \([0-9a-f:]*\) on .*/\1/p')
+        [ -n "$gwmac" ] || gwmac=incomplete
+      else
+        gwmac=none
+      fi
+      pkt=$(/usr/sbin/ipconfig getpacket "$1" 2>/dev/null)
+      dhcp_router=$(printf '%s\n' "$pkt" | /usr/bin/sed -n 's/^router.*: *{*\([0-9][0-9.]*\).*/\1/p' | /usr/bin/head -1)
+      dhcp_dns=$(printf '%s\n' "$pkt" | /usr/bin/sed -n 's/^domain_name_server.*: *{*\([0-9][0-9.]*\).*/\1/p' | /usr/bin/head -1)
+      echo "iface=''${1:--} link=''${3:--} ip=''${4:--} ssid=''${5:--} gw=''${2:--} gwmac=''${gwmac:-none} dhcp_router=''${dhcp_router:--} dhcp_dns=''${dhcp_dns:--}"
+    }
+
+    # Deep ARP-layer forensics for a gateway-down incident — exactly the state
+    # the manual netdiag.sh captures, but fired automatically the moment the gw
+    # ping dies (see the caller's one-shot gating). Backgrounded by the caller,
+    # so the slow `log show` cannot stall the tick loop. Args: ts iface gw before.
+    gw_incident_dump() {
+      local fp bcast
+      echo "$1 GWD before: $4"
+      if [ -n "$3" ]; then
+        echo "$1 GWD arp: $(/usr/sbin/arp -an 2>/dev/null | /usr/bin/grep -F "($3)" || echo '(no arp entry)')"
+        # Drop the entry and re-ping: does the MAC re-resolve? (incomplete after
+        # this = ARP/L2 dead — private-MAC/reply-only; resolves but ping fails =
+        # the gw filters us.) This mutates the ARP cache, which can also unstick
+        # a stale entry — the same trick netdiag.sh uses, done deliberately.
+        /usr/sbin/arp -d "$3" >/dev/null 2>&1
+        if /sbin/ping -c 2 -t 2 "$3" >/dev/null 2>&1; then fp=OK; else fp=FAIL; fi
+        echo "$1 GWD force-arp: arp -d + ping = $fp; $(/usr/sbin/arp -an 2>/dev/null | /usr/bin/grep -F "($3)" || echo '(still no entry)')"
+      else
+        echo "$1 GWD arp: (no default gateway)"
+      fi
+      bcast=$(/sbin/ifconfig "$2" 2>/dev/null | /usr/bin/awk '/inet /{print $6; exit}')
+      if [ -n "$bcast" ]; then
+        echo "$1 GWD bcast($bcast): $(/sbin/ping -c 2 -t 2 "$bcast" 2>&1 | /usr/bin/awk '/packets/{print; exit}')"
+      fi
+      /usr/bin/log show --last 10m --predicate 'subsystem == "com.apple.IPConfiguration"' --style compact 2>/dev/null \
+        | /usr/bin/grep -iE "arp|router|conflict|lease|roam" | /usr/bin/tail -20 \
+        | /usr/bin/sed "s/^/$1 GWD ipconfig-log: /"
+    }
+
     echo "$(/bin/date '+%F %T') START net-observer"
     /bin/mkdir -p /var/lib/net-observer
     # Each tick's DNS probes use a fresh mktemp dir removed at end of tick; a
@@ -245,6 +293,9 @@ let
     wedge_ticks=0
     last_kick=0
     dns_incident=0
+    prev_link_snap=""
+    last_good_snap="(none yet)"
+    gw_incident=0
     while :; do
       ts=$(/bin/date '+%F %T')
 
@@ -337,6 +388,33 @@ let
       /bin/rm -rf "$dnstmp"
 
       echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
+
+      # --- L2/DHCP state, logged only on change (the "before" timeline) ------
+      # gateway ARP entry + DHCP router/DNS; NET line only when it differs from
+      # the previous tick. last_good_snap keeps the most recent snapshot taken
+      # while the gw still answered, so the incident dump can show before->after.
+      link_snap=$(link_snapshot "$iface" "$gw" "$link" "$myip" "$ssid")
+      if [ "$link_snap" != "$prev_link_snap" ]; then
+        echo "$ts NET $link_snap"
+        prev_link_snap="$link_snap"
+      fi
+      case "$gwst" in OK) last_good_snap="$link_snap" ;; esac
+
+      # --- gw incident: one-shot deep ARP dump when the gateway ping dies -----
+      # Fires on the first FAIL/NOGW tick, once per incident, re-armed when the
+      # gw pings again (mirrors dns_incident). Backgrounded so the dump's slow
+      # `log show` cannot stall the 15s loop.
+      case "$gwst" in
+        FAIL | NOGW)
+          if [ "$gw_incident" = 0 ]; then
+            gw_incident=1
+            gw_incident_dump "$ts" "$iface" "$gw" "$last_good_snap" &
+          fi
+          ;;
+        *)
+          gw_incident=0
+          ;;
+      esac
 
       # One-shot DNS detail dump, gated so an incident logs once and re-arms
       # after recovery. What the dump answers: was the cache poisoned with a
