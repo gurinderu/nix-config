@@ -37,9 +37,23 @@
 
   systemd.services.night-llm = {
     description = "Nightly Fabro code-review batch on the local model";
-    after = [ "fabro.service" "ollama.service" ];
-    wants = [ "fabro.service" "ollama.service" ];
-    path = with pkgs; [ coreutils git util-linux systemd bash gnugrep findutils ];
+    after = [
+      "fabro.service"
+      "ollama.service"
+    ];
+    wants = [
+      "fabro.service"
+      "ollama.service"
+    ];
+    path = with pkgs; [
+      coreutils
+      git
+      util-linux
+      systemd
+      bash
+      gnugrep
+      findutils
+    ];
     serviceConfig = {
       Type = "oneshot";
       # Free RAM: stop the runners and make sure the model is present.
