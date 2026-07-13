@@ -97,6 +97,7 @@
       nixosConfigurations."thinkpad-x1-gen12" = import ./hosts/thinkpad-x1-gen12 {
         inherit
           inputs
+          self
           nixpkgs
           home-manager
           ;
