@@ -14,6 +14,7 @@
     ./hardware-configuration.nix
     ./sing-box.nix
     ./github-runner.nix
+    ./fabro.nix
   ];
 
   nix.settings.experimental-features = [
