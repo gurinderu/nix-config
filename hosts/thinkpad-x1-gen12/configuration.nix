@@ -15,6 +15,7 @@
     ./sing-box.nix
     ./github-runner.nix
     ./fabro.nix
+    ./night-llm.nix
   ];
 
   nix.settings.experimental-features = [
