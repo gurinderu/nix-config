@@ -280,6 +280,23 @@ let
       /usr/bin/log show --last 10m --predicate 'subsystem == "com.apple.IPConfiguration"' --style compact 2>/dev/null \
         | /usr/bin/grep -iE "arp|router|conflict|lease|roam" | /usr/bin/tail -20 \
         | /usr/bin/sed "s/^/$1 GWD ipconfig-log: /"
+      # The Wi-Fi driver's OWN verdict on why the link died. On an "unusable"
+      # link the BCMWLAN driver fires a CoreCapture, its directory name encoding
+      # the inducer/reason: "Net Beacons Lost" (AP beacons stopped arriving —
+      # RF/range), "Net Deauthentication ... Reason code=N" (AP kicked us),
+      # "SlowWiFiRecovery"/"DNSFailureRecovery reassoc" (macOS forced a reassoc).
+      # The ipconfig-log above is only the DHCP aftermath; THIS is the L1/L2
+      # trigger, which is why the pre-existing dump never explained the gw drops.
+      if [ -d /Library/Logs/CrashReporter/CoreCapture/WiFi ]; then
+        /bin/ls -1t /Library/Logs/CrashReporter/CoreCapture/WiFi 2>/dev/null \
+          | /usr/bin/head -3 | /usr/bin/sed "s/^/$1 GWD wifi-capture: /"
+      fi
+      # symptomsd's network-epoch changes carry the roam/noroam attribution for
+      # the reassociation storm that follows a beacon loss — "roaming" means the
+      # driver moved us to another BSSID, "noroam" means a fresh (re)association.
+      /usr/bin/log show --last 10m --predicate 'process == "symptomsd" AND category == "netepochs"' --style compact 2>/dev/null \
+        | /usr/bin/grep -iE "roam" | /usr/bin/tail -10 \
+        | /usr/bin/sed "s/^/$1 GWD wifi-epoch: /"
     }
 
     echo "$(/bin/date '+%F %T') START net-observer"
