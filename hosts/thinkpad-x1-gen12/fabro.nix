@@ -7,6 +7,39 @@
 }:
 let
   fabroLib = import ./fabro-lib.nix { inherit self lib; };
+  # Fabro derives its (writable) config dir from --config's parent and creates
+  # subdirs like environments/ there, so the settings file must live in a
+  # fabro-owned dir — NOT read-only /etc. Rendered to the store, then installed
+  # into /var/lib/fabro by ExecStartPre.
+  settingsToml = pkgs.writeText "fabro-settings.toml" ''
+    _version = 1
+
+    [server.listen]
+    type = "tcp"
+    address = "127.0.0.1:3000"
+
+    [server.web]
+    enabled = true
+    url = "https://nixos.tail411887.ts.net"
+
+    [server.auth]
+    methods = ["dev-token"]
+
+    [llm.providers.ollama]
+    adapter  = "openai_compatible"
+    base_url = "http://127.0.0.1:11434/v1"
+
+    [llm.models."qwen36-local"]
+    provider = "ollama"
+    api_id   = "${fabroLib.modelTag}"
+    default  = true
+
+    [run.model]
+    name = "qwen36-local"
+
+    [server.sandbox.providers.docker]
+    enabled = true
+  '';
 in
 {
   # Dedicated service identity shared by the Fabro server (Task 4) and the
@@ -59,38 +92,6 @@ in
     mode = "0400";
   };
 
-  # Static, read-only Fabro settings. Ollama is an OpenAI-compatible provider with
-  # no auth; the model default routes every workflow node to the local model.
-  environment.etc."fabro/settings.toml".text = ''
-    _version = 1
-
-    [server.listen]
-    type = "tcp"
-    address = "127.0.0.1:3000"
-
-    [server.web]
-    enabled = true
-    url = "https://nixos.tail411887.ts.net"
-
-    [server.auth]
-    methods = ["dev-token"]
-
-    [llm.providers.ollama]
-    adapter  = "openai_compatible"
-    base_url = "http://127.0.0.1:11434/v1"
-
-    [llm.models."qwen36-local"]
-    provider = "ollama"
-    api_id   = "${fabroLib.modelTag}"
-    default  = true
-
-    [run.model]
-    name = "qwen36-local"
-
-    [server.sandbox.providers.docker]
-    enabled = true
-  '';
-
   systemd.services.fabro = {
     description = "Fabro server (local UI + run store)";
     wantedBy = [ "multi-user.target" ];
@@ -107,9 +108,12 @@ in
       Environment = [ "HOME=/var/lib/fabro" ];
       # SESSION_SECRET + FABRO_DEV_TOKEN (Fabro requires both when auth is on).
       EnvironmentFile = config.sops.templates."fabro-server.env".path;
+      # Place settings.toml in the fabro-owned StateDirectory so Fabro's derived
+      # config dir (/var/lib/fabro) is writable for environments/, etc.
+      ExecStartPre = "${pkgs.coreutils}/bin/install -Dm644 ${settingsToml} /var/lib/fabro/settings.toml";
       # bind + web url come from settings.toml (single authority); only pass
       # what settings.toml can't express.
-      ExecStart = "${fabroLib.fabroExe} server start --web --storage-dir /var/lib/fabro/storage --config /etc/fabro/settings.toml";
+      ExecStart = "${fabroLib.fabroExe} server start --web --storage-dir /var/lib/fabro/storage --config /var/lib/fabro/settings.toml";
       Restart = "on-failure";
       RestartSec = 5;
     };
