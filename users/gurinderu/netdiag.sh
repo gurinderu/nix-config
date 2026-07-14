@@ -45,6 +45,13 @@ ping -c 3 -t 5 1.1.1.1 2>&1 | tail -3
 echo "--- лог IPConfiguration за 30 мин ---"
 log show --last 30m --predicate 'subsystem == "com.apple.IPConfiguration"' --style compact 2>/dev/null | grep -iE "arp|router|conflict|lease|roam" | tail -40
 
+echo "--- вердикт Wi-Fi-драйвера (CoreCapture: Beacons Lost / Deauth / reassoc) ---"
+# L1/L2-причина падения линка — именно её не видно в IPConfiguration-логе выше.
+ls -1t /Library/Logs/CrashReporter/CoreCapture/WiFi 2>/dev/null | head -8
+
+echo "--- смены сетевой эпохи en0 (roam/noroam) за 30 мин ---"
+log show --last 30m --predicate 'process == "symptomsd" AND category == "netepochs"' --style compact 2>/dev/null | grep -iE "roam" | tail -20
+
 echo "--- приватный MAC для текущей сети ---"
 CURSSID=$(wdutil info 2>/dev/null | awk -F': ' '/ SSID/{print $2; exit}')
 /usr/libexec/PlistBuddy -c "Print" /Library/Preferences/com.apple.wifi.known-networks.plist 2>/dev/null | grep -A5 -i "$CURSSID" | head -20
