@@ -18,11 +18,13 @@ in
   };
   users.groups.fabro = { };
 
-  # WARNING: night_llm_repos, night_llm_github_token, and fabro_dev_token MUST
-  # exist in secrets/secrets.yaml (added via `sops` + `sops updatekeys`) BEFORE
-  # `nixos-rebuild switch`, otherwise sops-install-secrets fails the WHOLE host
-  # activation — taking down the runner + dockerhub secrets in the same file,
-  # not just Fabro.
+  # WARNING: night_llm_repos, night_llm_github_token, fabro_dev_token, and
+  # fabro_session_secret MUST exist in secrets/secrets.yaml (added via `sops`)
+  # BEFORE `nixos-rebuild switch`, otherwise sops-install-secrets fails the WHOLE
+  # host activation — taking down the runner + dockerhub secrets in the same
+  # file, not just Fabro.
+  # Formats (Fabro-validated): fabro_dev_token = "fabro_dev_<64 hex>";
+  # fabro_session_secret = 64 hex chars (>= 32 bytes).
   sops.secrets.night_llm_repos = {
     owner = "fabro";
     group = "fabro";
@@ -38,14 +40,36 @@ in
     group = "fabro";
     mode = "0400";
   };
+  sops.secrets.fabro_session_secret = {
+    owner = "fabro";
+    group = "fabro";
+    mode = "0400";
+  };
+
+  # Fabro reads its auth secrets from the environment (not settings.toml). Render
+  # a systemd EnvironmentFile from the sops secrets so the plaintext never lands
+  # in the Nix store.
+  sops.templates."fabro-server.env" = {
+    content = ''
+      SESSION_SECRET=${config.sops.placeholder.fabro_session_secret}
+      FABRO_DEV_TOKEN=${config.sops.placeholder.fabro_dev_token}
+    '';
+    owner = "fabro";
+    group = "fabro";
+    mode = "0400";
+  };
 
   # Static, read-only Fabro settings. Ollama is an OpenAI-compatible provider with
   # no auth; the model default routes every workflow node to the local model.
   environment.etc."fabro/settings.toml".text = ''
+    _version = 1
+
     [server.listen]
-    bind = "127.0.0.1:3000"
+    type = "tcp"
+    address = "127.0.0.1:3000"
 
     [server.web]
+    enabled = true
     url = "https://nixos.tail411887.ts.net"
 
     [server.auth]
@@ -61,7 +85,7 @@ in
     default  = true
 
     [run.model]
-    provider = "ollama"
+    name = "qwen36-local"
 
     [server.sandbox.providers.docker]
     enabled = true
@@ -81,8 +105,8 @@ in
       StateDirectory = "fabro";
       WorkingDirectory = "/var/lib/fabro";
       Environment = [ "HOME=/var/lib/fabro" ];
-      # Seed the stable dev-token from sops before the server starts.
-      ExecStartPre = "${pkgs.coreutils}/bin/install -Dm400 -o fabro -g fabro ${config.sops.secrets.fabro_dev_token.path} /var/lib/fabro/dev-token";
+      # SESSION_SECRET + FABRO_DEV_TOKEN (Fabro requires both when auth is on).
+      EnvironmentFile = config.sops.templates."fabro-server.env".path;
       # bind + web url come from settings.toml (single authority); only pass
       # what settings.toml can't express.
       ExecStart = "${fabroLib.fabroExe} server start --web --storage-dir /var/lib/fabro/storage --config /etc/fabro/settings.toml";
