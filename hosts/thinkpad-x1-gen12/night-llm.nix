@@ -63,12 +63,8 @@ in
     path = with pkgs; [
       coreutils
       git
-      gh
       util-linux
       systemd
-      bash
-      gnugrep
-      findutils
     ];
     serviceConfig = {
       Type = "oneshot";
@@ -121,6 +117,9 @@ in
 
         [run.clone]
         enabled = false
+
+        [run.artifacts]
+        include = ["REVIEW-FINDINGS.md"]
         EOF
           chown -R fabro:fabro "$work"
           (
@@ -131,20 +130,10 @@ in
               >>"$log" 2>&1
           ) || { echo "run failed: $repo" >>"$outdir/errors.log"; rm -rf "$work"; continue; }
 
-          # Deliver only the report to the PR (host-controlled): agent
-          # code-edits never reach it, only REVIEW-FINDINGS.md.
-          (
-            set -e
-            cd "$work/repo"
-            if [ -f REVIEW-FINDINGS.md ]; then
-              git checkout -- . 2>/dev/null || true          # discard any agent edits to tracked files
-              branch="night-review-$(date +%Y%m%d-%H%M%S)"
-              git checkout -b "$branch"
-              git add REVIEW-FINDINGS.md                       # ONLY the report, nothing else
-              git -c user.name='night-llm' -c user.email='night-llm@localhost' commit -m 'nightly review findings' </dev/null
-              GH_TOKEN="$token" GIT_TERMINAL_PROMPT=0 git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' push -u origin "$branch" </dev/null
-              GH_TOKEN="$token" ${pkgs.gh}/bin/gh pr create --repo "$repo" --head "$branch" --title "nightly review: logic gaps" --body-file REVIEW-FINDINGS.md </dev/null
-            fi ) >>"$log" 2>&1 || echo "deliver failed: $repo" >>"$outdir/errors.log"
+          # The report (REVIEW-FINDINGS.md) is collected by Fabro as a run
+          # artifact (see [run.artifacts] above) and is viewable/downloadable in
+          # the Fabro web UI over Tailscale. No GitHub push/PR, no /tmp copy —
+          # the token above is used only to clone (read-only).
           rm -rf "$work"
         done < ${config.sops.secrets.night_llm_repos.path}
       '';
