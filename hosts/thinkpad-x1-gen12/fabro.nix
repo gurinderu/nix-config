@@ -113,7 +113,9 @@ in
       ExecStartPre = "${pkgs.coreutils}/bin/install -Dm644 ${settingsToml} /var/lib/fabro/settings.toml";
       # bind + web url come from settings.toml (single authority); only pass
       # what settings.toml can't express.
-      ExecStart = "${fabroLib.fabroExe} server start --web --storage-dir /var/lib/fabro/storage --config /var/lib/fabro/settings.toml";
+      # --foreground: without it `fabro server start` daemonizes and the
+      # launcher exits, so systemd (Type=simple) tears down the forked server.
+      ExecStart = "${fabroLib.fabroExe} server start --foreground --web --storage-dir /var/lib/fabro/storage --config /var/lib/fabro/settings.toml";
       Restart = "on-failure";
       RestartSec = 5;
     };
