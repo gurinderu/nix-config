@@ -280,23 +280,39 @@ let
       /usr/bin/log show --last 10m --predicate 'subsystem == "com.apple.IPConfiguration"' --style compact 2>/dev/null \
         | /usr/bin/grep -iE "arp|router|conflict|lease|roam" | /usr/bin/tail -20 \
         | /usr/bin/sed "s/^/$1 GWD ipconfig-log: /"
-      # The Wi-Fi driver's OWN verdict on why the link died. On an "unusable"
-      # link the BCMWLAN driver fires a CoreCapture, its directory name encoding
-      # the inducer/reason: "Net Beacons Lost" (AP beacons stopped arriving —
-      # RF/range), "Net Deauthentication ... Reason code=N" (AP kicked us),
-      # "SlowWiFiRecovery"/"DNSFailureRecovery reassoc" (macOS forced a reassoc).
-      # The ipconfig-log above is only the DHCP aftermath; THIS is the L1/L2
-      # trigger, which is why the pre-existing dump never explained the gw drops.
-      if [ -d /Library/Logs/CrashReporter/CoreCapture/WiFi ]; then
-        /bin/ls -1t /Library/Logs/CrashReporter/CoreCapture/WiFi 2>/dev/null \
-          | /usr/bin/head -3 | /usr/bin/sed "s/^/$1 GWD wifi-capture: /"
+      wifi_capture_dump "$1" GWD
+    }
+
+    # The Wi-Fi driver's OWN verdict on why the link died — the L1/L2 trigger the
+    # IPConfiguration log (DHCP aftermath) never shows. Args: ts tag (GWD|GWCHG).
+    # Called both from a gateway-down incident AND from a physical-network switch
+    # (fast Wi-Fi drop → hotspot failover, where gw never shows FAIL). On an
+    # "unusable" link the BCMWLAN driver fires a CoreCapture whose directory name
+    # encodes the inducer/reason: "Net Beacons Lost" (AP beacons stopped arriving
+    # — RF/range), "Net Deauthentication ... Reason code=N" (AP kicked us),
+    # "SlowWiFiRecovery"/"DNSFailureRecovery reassoc" (macOS forced a reassoc).
+    # NB: a clean disassociation/roam may leave NO CoreCapture — the symptomsd
+    # netepochs "roaming"/en0->(null) burst below is then the only trace.
+    wifi_capture_dump() {
+      # Only a capture created NEAR this incident (~last 3 min) is relevant — an
+      # older one is unrelated noise (ls -1t|head always returned stale dirs).
+      # Crucially the ABSENCE of a fresh capture is itself the diagnostic: it
+      # means the driver saw no beacon-loss/deauth, so L2 was fine and the drop
+      # is gateway/router-side (ARP still resolves, the gw just won't answer) —
+      # a different failure class than an RF/beacon drop, which DOES capture.
+      caps=$(/usr/bin/find /Library/Logs/CrashReporter/CoreCapture/WiFi -mindepth 1 -maxdepth 1 -newermt '-180 seconds' 2>/dev/null)
+      if [ -n "$caps" ]; then
+        printf '%s\n' "$caps" | /usr/bin/sed "s#.*/WiFi/##; s/^/$1 $2 wifi-capture: /"
+      else
+        echo "$1 $2 wifi-capture: (none <3m — driver saw no beacon-loss/deauth; RF/link was NOT the trigger, look router-side)"
       fi
-      # symptomsd's network-epoch changes carry the roam/noroam attribution for
-      # the reassociation storm that follows a beacon loss — "roaming" means the
-      # driver moved us to another BSSID, "noroam" means a fresh (re)association.
-      /usr/bin/log show --last 10m --predicate 'process == "symptomsd" AND category == "netepochs"' --style compact 2>/dev/null \
-        | /usr/bin/grep -iE "roam" | /usr/bin/tail -10 \
-        | /usr/bin/sed "s/^/$1 GWD wifi-epoch: /"
+      # symptomsd transitions in the incident window: "roaming" = driver moved to
+      # another BSSID; "primary interface change to (null)"/Unsatisfied = the
+      # network went away. Windowed and filtered so the ~70s "noroam" heartbeat
+      # doesn't bury the signal (the earlier tail-12 caught only post-drop noise).
+      /usr/bin/log show --last 5m --predicate 'process == "symptomsd" AND category == "netepochs"' --style compact 2>/dev/null \
+        | /usr/bin/grep -iE "roaming|Unsatisfied|interface change to .null." | /usr/bin/tail -8 \
+        | /usr/bin/sed "s/^/$1 $2 wifi-epoch: /"
     }
 
     echo "$(/bin/date '+%F %T') START net-observer"
@@ -313,6 +329,7 @@ let
     prev_link_snap=""
     last_good_snap="(none yet)"
     gw_incident=0
+    prev_gw=""
     while :; do
       ts=$(/bin/date '+%F %T')
 
@@ -432,6 +449,22 @@ let
           gw_incident=0
           ;;
       esac
+
+      # Physical-network switch: the gateway changed to a DIFFERENT real gw
+      # between ticks (Wi-Fi dropped and macOS fell over to e.g. the iPhone
+      # hotspot). gwst never shows FAIL here — a new gw answers — so the
+      # FAIL-gated dump above misses it. But a *voluntary* switch (user turns on
+      # the hotspot) looks identical from here, and dumping on every network
+      # change would be noise. Discriminator: an involuntary drop leaves a FRESH
+      # Wi-Fi driver CoreCapture (beacon loss / deauth) in the last ~2 min; a
+      # manual switch leaves none. So only capture when one exists.
+      if [ -n "$gw" ] && [ -n "$prev_gw" ] && [ "$gw" != "$prev_gw" ]; then
+        if [ -n "$(/usr/bin/find /Library/Logs/CrashReporter/CoreCapture/WiFi -mindepth 1 -maxdepth 1 -newermt '-120 seconds' 2>/dev/null | /usr/bin/head -1)" ]; then
+          echo "$ts GWCHG gateway $prev_gw -> $gw with fresh Wi-Fi capture (involuntary drop)"
+          wifi_capture_dump "$ts" GWCHG &
+        fi
+      fi
+      prev_gw="$gw"
 
       # One-shot DNS detail dump, gated so an incident logs once and re-arms
       # after recovery. What the dump answers: was the cache poisoned with a
