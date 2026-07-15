@@ -292,21 +292,27 @@ let
     # so the slow `log show` cannot stall the tick loop. Args: ts iface gw before.
     # Also freezes the PCAP ring (above) so packet-level proof of the drop —
     # requests out, replies gone — survives past the failover to the hotspot.
-    gw_incident_dump() {
-      local fp bcast frz
-      echo "$1 GWD before: $4"
-
-      # Freeze the pcap ring FIRST — before the slow arp/log-show work below — so
-      # the minutes of control-plane packets around this drop are copied out
-      # before rotation overwrites them. Copies the whole ring to a timestamped
-      # dir; the currently-written file may end in a truncated packet, which pcap
-      # readers tolerate. Prune to the last 12 incidents so the frozen captures
-      # cannot grow without bound (logrotate only owns the .log, not these).
+    # Freeze the pcap ring — copy the whole ring to a timestamped dir before the
+    # 8 MB buffer rotates over the packets around this incident. The last file
+    # may end mid-packet (pcap readers tolerate it). Pruned to the last 12 so the
+    # captures can't grow without bound (logrotate owns only the .log). Called
+    # from BOTH a gw-down incident (GWD) and a fast gw failover (GWCHG). Args: ts tag.
+    freeze_pcap() {
+      local frz
       frz="/var/lib/net-observer/gwdrop-$(printf '%s' "$1" | /usr/bin/tr ' :' '--')"
       /bin/mkdir -p "$frz"
       /bin/cp /var/lib/net-observer/ring.pcap* "$frz"/ 2>/dev/null
-      echo "$1 GWD pcap-frozen: $frz ($(/bin/ls "$frz" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ') files; read: tcpdump -nr <file> / open in Wireshark)"
+      echo "$1 $2 pcap-frozen: $frz ($(/bin/ls "$frz" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ') files; read: tcpdump -nr <file> / open in Wireshark)"
       /bin/ls -1dt /var/lib/net-observer/gwdrop-* 2>/dev/null | /usr/bin/tail -n +13 | /usr/bin/xargs /bin/rm -rf 2>/dev/null
+    }
+
+    gw_incident_dump() {
+      local fp bcast
+      echo "$1 GWD before: $4"
+      # Freeze the ring FIRST — before the slow arp/log-show work below — so the
+      # minutes of control-plane packets around this drop are copied out before
+      # rotation overwrites them.
+      freeze_pcap "$1" GWD
       if [ -n "$3" ]; then
         echo "$1 GWD arp: $(/usr/sbin/arp -an 2>/dev/null | /usr/bin/grep -F "($3)" || echo '(no arp entry)')"
         # Drop the entry and re-ping: does the MAC re-resolve? (incomplete after
@@ -499,12 +505,19 @@ let
       # Physical-network switch: the gateway changed to a DIFFERENT real gw
       # between ticks (Wi-Fi dropped and macOS fell over to e.g. the iPhone
       # hotspot). gwst never shows FAIL here — a new gw answers — so the
-      # FAIL-gated dump above misses it. But a *voluntary* switch (user turns on
-      # the hotspot) looks identical from here, and dumping on every network
-      # change would be noise. Discriminator: an involuntary drop leaves a FRESH
-      # Wi-Fi driver CoreCapture (beacon loss / deauth) in the last ~2 min; a
-      # manual switch leaves none. So only capture when one exists.
+      # FAIL-gated GWD dump above misses it entirely. This is the exact blind
+      # spot a fast ROUTER-side drop falls into: the router silently stops
+      # answering, the Mac fails over within one tick, and with no CoreCapture
+      # the capture-gated branch below is also silent (observed 2026-07-15
+      # 12:02:18 — the coworking gw stopped answering a live 1/s ping at a hard
+      # ~2-min mark; only the pcap ring, frozen by hand, caught it). So freeze
+      # the ring UNCONDITIONALLY on any gw change — it holds the old gw going
+      # silent, and a voluntary switch just freezes a harmless extra capture
+      # (cheap, pruned to 12). The wifi_capture_dump stays gated on a fresh
+      # CoreCapture, which still discriminates an involuntary RF drop from a
+      # manual switch.
       if [ -n "$gw" ] && [ -n "$prev_gw" ] && [ "$gw" != "$prev_gw" ]; then
+        freeze_pcap "$ts" GWCHG &
         if [ -n "$(/usr/bin/find /Library/Logs/CrashReporter/CoreCapture/WiFi -mindepth 1 -maxdepth 1 -newermt '-120 seconds' 2>/dev/null | /usr/bin/head -1)" ]; then
           echo "$ts GWCHG gateway $prev_gw -> $gw with fresh Wi-Fi capture (involuntary drop)"
           wifi_capture_dump "$ts" GWCHG &
