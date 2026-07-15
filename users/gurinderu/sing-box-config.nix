@@ -225,12 +225,19 @@ in
     ++ extraDnsRules
     ++ [
       {
-        # PTR (reverse DNS) and DNS-SD queries go to the local resolver.
-        # The TUN captures these via hijack-dns but sing-box can't parse
-        # DNS-SD records (bad rdata / bad question name errors). Routing
-        # them local silences the noise and lets the OS handle them.
+        # PTR (reverse DNS) and DNS-SD queries: reject outright. macOS sprays
+        # `*.in-addr.arpa IN PTR` and `_dns-sd._udp` Bonjour service-discovery
+        # lookups constantly, and sing-box's `local` server CANNOT answer
+        # non-A/AAAA queries on macOS when it sits behind the TUN with the
+        # underlying DHCP resolver unavailable (the normal state on an iPhone
+        # hotspot / right after a network switch). Forwarding them to `local`
+        # then failed every one with "only A and AAAA queries are supported on
+        # Apple platforms when using TUN and DHCP unavailable" at ERROR level —
+        # a steady flood that bloated /var/log/sing-box.log to ~790 MB. Reverse
+        # DNS and Bonjour discovery are cosmetic over a full tunnel, so answer
+        # them with an empty reject instead of a resolver that errors.
         query_type = [ "PTR" ];
-        server = "local";
+        action = "reject";
       }
       {
         # Everything else goes through the VPN; use fakeip so routing
