@@ -307,7 +307,7 @@ let
     }
 
     gw_incident_dump() {
-      local fp bcast
+      local fp
       echo "$1 GWD before: $4"
       # Freeze the ring FIRST — before the slow arp/log-show work below — so the
       # minutes of control-plane packets around this drop are copied out before
@@ -325,10 +325,13 @@ let
       else
         echo "$1 GWD arp: (no default gateway)"
       fi
-      bcast=$(/sbin/ifconfig "$2" 2>/dev/null | /usr/bin/awk '/inet /{print $6; exit}')
-      if [ -n "$bcast" ]; then
-        echo "$1 GWD bcast($bcast): $(/sbin/ping -c 2 -t 2 "$bcast" 2>&1 | /usr/bin/awk '/packets/{print; exit}')"
-      fi
+      # NB: no broadcast ping here. A ping to the subnet broadcast pulls a reply
+      # from every host that answers broadcast ICMP (hundreds on a flat /20), so
+      # its "+N duplicates" says nothing about whether the GATEWAY is up — it
+      # only measures how many neighbours answer broadcast, and it muddied the
+      # gw diagnosis (those replies got misread as a gw/segment signal, and the
+      # coworking admin objected to the broadcast traffic). The gw's own
+      # reachability is already the force-arp verdict above + the TICK gw() probe.
       /usr/bin/log show --last 10m --predicate 'subsystem == "com.apple.IPConfiguration"' --style compact 2>/dev/null \
         | /usr/bin/grep -iE "arp|router|conflict|lease|roam" | /usr/bin/tail -20 \
         | /usr/bin/sed "s/^/$1 GWD ipconfig-log: /"
