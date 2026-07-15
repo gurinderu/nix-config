@@ -140,6 +140,38 @@ let
       /bin/sleep 2
     done &
 
+    # --- PCAP ring (background) ----------------------------------------------
+    # A continuous small ring-buffer capture of L2/L3 CONTROL traffic on the
+    # physical interface, so the packets AROUND a gateway drop are already on
+    # disk the moment the incident fires — by then the Mac has often failed over
+    # to the iPhone hotspot (seen within one 15s tick), far too late to START
+    # capturing after detecting the drop. The filter deliberately EXCLUDES the
+    # fat VLESS/data flow and keeps only ARP, ICMP, DHCP and broadcast — which is
+    # exactly the "who stopped answering" evidence: my echo-requests still
+    # leaving while the gateway's replies stop, any deauth/ICMP-unreachable the
+    # router emits, and the broadcast-storm rate. -s128 (headers only) + an 8 MB
+    # ring (8×1MB) then covers minutes. Bound to the same physical interface the
+    # TICK loop probes (never the utun), re-picked in a restart loop so it
+    # survives sleep/wake and iface changes — same idiom as the EVT stream above.
+    # tcpdump lives in /usr/sbin and the daemon runs as root, so no extra
+    # dependency or privilege. Frozen per incident by gw_incident_dump() below.
+    /bin/mkdir -p /var/lib/net-observer
+    while :; do
+      cif=$(/sbin/route -n get default 2>/dev/null | /usr/bin/awk '/interface:/ { print $2; exit }')
+      case "$cif" in
+        utun* | "")
+          cif=$(/usr/sbin/scutil --nwi | /usr/bin/awk \
+            '/^Network interfaces:/ { for (i = 3; i <= NF; i++) if ($i !~ /^utun/) { print $i; exit } }')
+          ;;
+      esac
+      [ -n "$cif" ] || cif=en0
+      /usr/sbin/tcpdump -i "$cif" -n -p -s 128 -C 1 -W 8 -w /var/lib/net-observer/ring.pcap \
+        'arp or icmp or udp port 67 or udp port 68 or ether broadcast' \
+        >/dev/null 2>&1
+      echo "$(/bin/date '+%F %T') EVT pcap-ring exited on ''${cif:--}; restarting"
+      /bin/sleep 2
+    done &
+
     # --- TICK loop (foreground) ----------------------------------------------
     # curl telnet:// does a bare TCP connect; on success it idles until -m
     # fires, so a non-zero time_connect means the connect succeeded regardless
@@ -258,9 +290,23 @@ let
     # the manual netdiag.sh captures, but fired automatically the moment the gw
     # ping dies (see the caller's one-shot gating). Backgrounded by the caller,
     # so the slow `log show` cannot stall the tick loop. Args: ts iface gw before.
+    # Also freezes the PCAP ring (above) so packet-level proof of the drop —
+    # requests out, replies gone — survives past the failover to the hotspot.
     gw_incident_dump() {
-      local fp bcast
+      local fp bcast frz
       echo "$1 GWD before: $4"
+
+      # Freeze the pcap ring FIRST — before the slow arp/log-show work below — so
+      # the minutes of control-plane packets around this drop are copied out
+      # before rotation overwrites them. Copies the whole ring to a timestamped
+      # dir; the currently-written file may end in a truncated packet, which pcap
+      # readers tolerate. Prune to the last 12 incidents so the frozen captures
+      # cannot grow without bound (logrotate only owns the .log, not these).
+      frz="/var/lib/net-observer/gwdrop-$(printf '%s' "$1" | /usr/bin/tr ' :' '--')"
+      /bin/mkdir -p "$frz"
+      /bin/cp /var/lib/net-observer/ring.pcap* "$frz"/ 2>/dev/null
+      echo "$1 GWD pcap-frozen: $frz ($(/bin/ls "$frz" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ') files; read: tcpdump -nr <file> / open in Wireshark)"
+      /bin/ls -1dt /var/lib/net-observer/gwdrop-* 2>/dev/null | /usr/bin/tail -n +13 | /usr/bin/xargs /bin/rm -rf 2>/dev/null
       if [ -n "$3" ]; then
         echo "$1 GWD arp: $(/usr/sbin/arp -an 2>/dev/null | /usr/bin/grep -F "($3)" || echo '(no arp entry)')"
         # Drop the entry and re-ping: does the MAC re-resolve? (incomplete after
