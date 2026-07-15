@@ -14,6 +14,14 @@
 { pkgs, config, ... }:
 let
   configPath = "${config.users.users.gurinderu.home}/.config/sing-box/config.json";
+  # The DIRECTORY holding config.json — what sing-box-reload watches. home-manager
+  # renders the config to a temp file and mv(1)s it over config.json (atomic
+  # rename, see users/gurinderu/sing-box.nix render_config). launchd WatchPaths on
+  # the FILE watches its vnode; an atomic rename swaps in a new inode, so launchd
+  # is left watching the orphaned old one and never fires (observed: config
+  # rewritten 14:49, daemon still the 14:39 process — stale reject rule). Watching
+  # the directory instead catches the rename, which mutates the dir's own vnode.
+  configDir = builtins.dirOf configPath;
 
   # State dir for the fakeip cache db (see cacheFilePath in
   # users/gurinderu/sing-box-config-darwin.nix) and the logrotate state file.
@@ -114,6 +122,19 @@ in
   # main daemon's lsof guard on cache.db absorbs the brief old/new overlap.
   # /bin/launchctl is on the always-mounted system volume, so no wait4path/nix
   # dependency is needed.
+  #
+  # WatchPaths is the DIRECTORY, not config.json itself: the renderer installs the
+  # file via an atomic mv (temp -> config.json). A WatchPaths on the file watches
+  # its vnode, and the rename swaps in a NEW inode, so launchd keeps watching the
+  # orphaned old one and never fires — the daemon then served a stale config until
+  # a manual kickstart (observed 2026-07-15: reject rule rendered but not loaded).
+  # The rename mutates the containing directory's vnode, which the directory watch
+  # catches reliably. Trade-off: the renderer's mktemp also touches the directory,
+  # so a render fires the watch twice (temp create, then rename) and every switch
+  # that re-renders restarts sing-box even if the content is unchanged — a ~1s TUN
+  # blip the lsof-on-cache.db guard already tolerates. ThrottleInterval collapses
+  # the double-fire; the pending rename event still relaunches after it, so the
+  # final kickstart reads the new config.
   launchd.daemons.sing-box-reload.serviceConfig = {
     ProgramArguments = [
       "/bin/launchctl"
@@ -121,7 +142,8 @@ in
       "-k"
       "system/org.nixos.sing-box"
     ];
-    WatchPaths = [ configPath ];
+    WatchPaths = [ configDir ];
+    ThrottleInterval = 3;
     # No RunAtLoad: the main daemon starts itself at boot; this one should fire
     # only on subsequent config changes.
     RunAtLoad = false;
