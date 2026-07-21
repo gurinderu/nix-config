@@ -82,18 +82,29 @@ in
       ExecStart = pkgs.writeShellScript "night-llm-run" ''
         set -u
         graph=${./night-code-review.fabro}
-        storage=/var/lib/fabro/storage
+        server=http://127.0.0.1:3000
         outdir=/var/lib/night-llm
         token="$(cat ${config.sops.secrets.night_llm_github_token.path})"
         if [ -z "$token" ]; then
           echo "night-llm: github token is empty (${config.sops.secrets.night_llm_github_token.path})" >&2
           exit 1
         fi
+        dev_token="$(cat ${config.sops.secrets.fabro_dev_token.path})"
         goal="$(cat "$outdir/task.md")"
         # SECURITY: GH_TOKEN is intentionally NOT exported into this (or the
         # agent's) environment. It is supplied only per-invocation to the
         # individual git/gh commands below that need it.
         # HOME comes from serviceConfig.Environment (shared with pre/post).
+
+        # `fabro run` is a CLIENT that executes the workflow ON the local Fabro
+        # server (which owns the run store + artifacts), so the CLI needs an auth
+        # session — `run` has no --storage-dir. Log in once with the dev-token
+        # (no browser); the session persists in HOME=/var/lib/fabro. Run as the
+        # fabro user so it lands in the same HOME the per-repo runs use below.
+        runuser -u fabro -- env HOME=/var/lib/fabro \
+          ${fabroLib.fabroExe} auth login --server "$server" \
+          --dev-token "$dev_token" --no-upgrade-check </dev/null || {
+            echo "night-llm: fabro auth login failed" >&2; exit 1; }
 
         while read -r repo; do
           [ -z "$repo" ] && continue
@@ -104,20 +115,21 @@ in
                  >>"$log" 2>&1; then
             echo "clone failed: $repo" >>"$outdir/errors.log"; rm -rf "$work"; continue
           fi
-          # HOST-VERIFY: with a network-blocked docker sandbox the repo must be
-          # provisioned WITHOUT network; confirm on the thinkpad how fabro
-          # mounts the pre-cloned $work/repo into the docker sandbox (`fabro
-          # sandbox cp` / bind mount). If provisioning can't be made to work,
-          # fall back to provider = "local" here (documented tradeoff: local
-          # cannot enforce a network block, but the GH token is already absent
-          # from the agent env above, so the residual risk is repo-content
-          # exfil only).
+          # NOTE: run.environment has NO provider field (valid keys: id, image,
+          # resources, network, lifecycle, labels, volumes, env) — the sandbox
+          # backend is selected server-side via [server.sandbox.providers.docker]
+          # in fabro's settings.toml, not here. network.mode = block requests a
+          # network-blocked sandbox. HOST-VERIFY still open: on the first real run
+          # check the Fabro UI (it shows the sandbox type per run) for docker vs
+          # local; if local, that is the documented fallback (cannot enforce the
+          # network block, but the GH token is absent from the agent env above, so
+          # residual risk is repo-content exfil only). No backticks in this
+          # heredoc: it is unquoted (<<EOF), so backticks would run as commands.
           cat >"$work/run.toml" <<EOF
         [workflow]
         graph = "$graph"
 
         [run.environment]
-        provider = "docker"
         network.mode = "block"
 
         [run.clone]
@@ -131,7 +143,7 @@ in
             cd "$work/repo"
             runuser -u fabro -- env HOME=/var/lib/fabro \
               ${fabroLib.fabroExe} run "$work/run.toml" \
-              --goal "$goal" --storage-dir "$storage" </dev/null \
+              --goal "$goal" --server "$server" --no-upgrade-check </dev/null \
               >>"$log" 2>&1
           ) || { echo "run failed: $repo" >>"$outdir/errors.log"; rm -rf "$work"; continue; }
 
