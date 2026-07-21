@@ -68,6 +68,11 @@ in
     ];
     serviceConfig = {
       Type = "oneshot";
+      # HOME must be set at the service level (not just in ExecStart's inline
+      # script) so ExecStartPre/ExecStopPost inherit it too — the `ollama` CLI
+      # panics ("$HOME is not defined") at startup otherwise, which failed the
+      # whole batch on the `ollama pull`/`ollama stop` steps.
+      Environment = [ "HOME=/var/lib/fabro" ];
       # Free RAM: stop the runners and make sure the model is present.
       ExecStartPre = pkgs.writeShellScript "night-llm-pre" ''
         set -eu
@@ -88,7 +93,7 @@ in
         # SECURITY: GH_TOKEN is intentionally NOT exported into this (or the
         # agent's) environment. It is supplied only per-invocation to the
         # individual git/gh commands below that need it.
-        export HOME=/var/lib/fabro
+        # HOME comes from serviceConfig.Environment (shared with pre/post).
 
         while read -r repo; do
           [ -z "$repo" ] && continue
