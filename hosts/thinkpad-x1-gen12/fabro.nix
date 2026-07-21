@@ -25,14 +25,36 @@ let
     [server.auth]
     methods = ["dev-token"]
 
-    [llm.providers.ollama]
-    adapter  = "openai_compatible"
+    # Local model served by ollama, exposed to fabro through its BUILT-IN
+    # `openai` provider re-pointed at ollama's OpenAI-compatible endpoint.
+    # A custom `[llm.providers.ollama]` does NOT work: fabro puts the model in
+    # its catalog but never registers the custom provider ("Provider 'ollama'
+    # not registered" at inference), and its "at least one provider configured"
+    # gate only recognises built-in providers' keys. So we repoint `openai` and
+    # give it a dummy key (OPENAI_API_KEY in the service env below; ollama
+    # ignores it). A custom model must supply family/display_name/limits/
+    # features or the catalog build fails at server startup. `default` is
+    # omitted — openai already has a default (gpt-*); the run selects this model
+    # explicitly via [run.model].
+    [llm.providers.openai]
     base_url = "http://127.0.0.1:11434/v1"
 
     [llm.models."qwen36-local"]
-    provider = "ollama"
-    api_id   = "${fabroLib.modelTag}"
-    default  = true
+    provider     = "openai"
+    api_id       = "${fabroLib.modelTag}"
+    family       = "qwen"
+    display_name = "Qwen3.6 35B Local"
+    enabled      = true
+
+    [llm.models."qwen36-local".limits]
+    context_window = 32768
+    max_output     = 8192
+
+    [llm.models."qwen36-local".features]
+    tools        = true
+    vision       = false
+    reasoning    = true
+    prompt_cache = false
 
     [run.model]
     name = "qwen36-local"
@@ -119,7 +141,13 @@ in
       Group = "fabro";
       StateDirectory = "fabro";
       WorkingDirectory = "/var/lib/fabro";
-      Environment = [ "HOME=/var/lib/fabro" ];
+      # OPENAI_API_KEY is a DUMMY: the openai provider is repointed at ollama
+      # (see settings.toml) which ignores the key, but fabro's provider gate
+      # needs *some* key present for a built-in provider to count as configured.
+      Environment = [
+        "HOME=/var/lib/fabro"
+        "OPENAI_API_KEY=ollama-local-dummy"
+      ];
       # SESSION_SECRET + FABRO_DEV_TOKEN (Fabro requires both when auth is on).
       EnvironmentFile = config.sops.templates."fabro-server.env".path;
       # Place settings.toml in the fabro-owned StateDirectory so Fabro's derived

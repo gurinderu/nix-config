@@ -52,6 +52,12 @@ in
 
   systemd.services.night-llm = {
     description = "Nightly Fabro code-review batch on the local model";
+    # Never let nixos-rebuild start or restart this oneshot during activation:
+    # its ExecStart runs the full multi-hour review batch, so a switch would
+    # block until it finishes (this hung a deploy once). It runs only via
+    # night-llm.timer or an explicit `systemctl start`.
+    restartIfChanged = false;
+    stopIfChanged = false;
     after = [
       "fabro.service"
       "ollama.service"
