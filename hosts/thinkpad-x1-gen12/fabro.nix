@@ -48,6 +48,12 @@ in
     isSystemUser = true;
     group = "fabro";
     home = "/var/lib/fabro";
+    # Fabro's docker sandbox provider talks to the Docker API socket, which on
+    # this host is podman's (/run/docker.sock -> /run/podman/podman.sock, mode
+    # 0660 group podman). The fabro worker runs as this user, so it must be in
+    # the podman group to reach the socket — otherwise sandbox creation fails
+    # with permission denied.
+    extraGroups = [ "podman" ];
   };
   users.groups.fabro = { };
 
@@ -82,10 +88,18 @@ in
   # Fabro reads its auth secrets from the environment (not settings.toml). Render
   # a systemd EnvironmentFile from the sops secrets so the plaintext never lands
   # in the Nix store.
+  # SECURITY TRADEOFF: the fabro worker refuses to start without a GitHub token
+  # ("GITHUB_TOKEN not configured — run fabro install or set GITHUB_TOKEN"), so
+  # runs (incl. the nightly review) cannot execute without one. This reverses
+  # the night-llm.nix intent of never handing the agent a token; the mitigation
+  # is that review runs use a network-blocked sandbox (run.environment.network
+  # .mode = "block"), so the agent cannot reach github.com to use it. We reuse
+  # the read-only night_llm_github_token; keep that token's scope minimal.
   sops.templates."fabro-server.env" = {
     content = ''
       SESSION_SECRET=${config.sops.placeholder.fabro_session_secret}
       FABRO_DEV_TOKEN=${config.sops.placeholder.fabro_dev_token}
+      GITHUB_TOKEN=${config.sops.placeholder.night_llm_github_token}
     '';
     owner = "fabro";
     group = "fabro";

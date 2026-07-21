@@ -135,6 +135,16 @@ in
         [run.clone]
         enabled = false
 
+        # No push: the server now has a GITHUB_TOKEN (fabro.nix) that the worker
+        # requires to start, so fabro would otherwise push run/meta branches to
+        # the reviewed repo's origin. This review is read-only (report collected
+        # as an artifact), so disable both branch pushes.
+        [run.run_branch]
+        enabled = false
+
+        [run.meta_branch]
+        enabled = false
+
         [run.artifacts]
         include = ["REVIEW-FINDINGS.md"]
         EOF
