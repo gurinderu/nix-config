@@ -5,9 +5,16 @@ digraph NightCodeReview {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    // type="agent" makes this a tool-using agent node (a shell/read_file/
+    // write_file loop), NOT a single-shot "prompt" node. A prompt node just
+    // emits text — fabro sends it NO tool definitions — so the model can never
+    // run bash or write REVIEW-FINDINGS.md, and (with no repo context in the
+    // prompt) it hallucinates a review of files that don't exist. The agent
+    // type is what puts "tools":[…] on the wire; pair it with
+    // [run.agent] fabro_tools = true in the run.toml (night-llm.nix).
     review [
         label="Review",
-        shape=tab,
+        type="agent",
         prompt="Review this repository for logic gaps, missed edge cases, and holes in reasoning, following the goal. Do NOT modify existing source files. Use bash to inspect the code, then write a single findings report to a new file named REVIEW-FINDINGS.md at the repo root. Group findings by severity (High/Medium/Low); for each give file:line and a one-paragraph explanation. If you find nothing substantive, say so explicitly in the file."
     ]
 
