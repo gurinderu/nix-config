@@ -26,6 +26,18 @@ in
     environmentVariables = {
       OLLAMA_KEEP_ALIVE = "10m"; # unload the model 10 min after last use → frees ~21 GB
       OLLAMA_MAX_LOADED_MODELS = "1";
+      # Fabro agent stages send a ~5 KB-token system prompt + tool schemas; the
+      # ollama default num_ctx=4096 rejects that with HTTP 400 "exceeds the
+      # available context size", so the agent dies before running a tool. Raise
+      # the default context (ollama ignores per-request num_ctx on the OpenAI
+      # path). 8192 clears the ~5 KB agent request with headroom while keeping the
+      # KV cache modest: this host is RAM-constrained (31 GB total, ~21 GB weights,
+      # swap already tight) and 16384 alongside daytime CI froze it hard (OOM). The
+      # nightly path stops the CI runners first (ExecStartPre) which frees RAM, but
+      # 8192 stays the safe default. Bump only after shrinking the resident set or
+      # confirming headroom; a review whose accumulated context exceeds 8192 will
+      # fail with the same HTTP 400.
+      OLLAMA_CONTEXT_LENGTH = "8192";
     };
   };
 
@@ -97,9 +109,11 @@ in
         fi
         dev_token="$(cat ${config.sops.secrets.fabro_dev_token.path})"
         goal="$(cat "$outdir/task.md")"
-        # SECURITY: GH_TOKEN is intentionally NOT exported into this (or the
-        # agent's) environment. It is supplied only per-invocation to the
-        # individual git/gh commands below that need it.
+        # SECURITY: this script's GH_TOKEN is not exported globally — it is passed
+        # only per-invocation to the host-side git clone below. NOTE this is no
+        # longer the whole token story: fabro clones the repo inside the sandbox
+        # using the SERVER's GITHUB_TOKEN (fabro.nix), so a token IS reachable from
+        # the review sandbox now — see the run.toml SECURITY REVERSAL note below.
         # HOME comes from serviceConfig.Environment (shared with pre/post).
 
         # `fabro run` is a CLIENT that executes the workflow ON the local Fabro
@@ -124,22 +138,31 @@ in
           # NOTE: run.environment has NO provider field (valid keys: id, image,
           # resources, network, lifecycle, labels, volumes, env) — the sandbox
           # backend is selected server-side via [server.sandbox.providers.docker]
-          # in fabro's settings.toml, not here. network.mode = block requests a
-          # network-blocked sandbox. HOST-VERIFY still open: on the first real run
-          # check the Fabro UI (it shows the sandbox type per run) for docker vs
-          # local; if local, that is the documented fallback (cannot enforce the
-          # network block, but the GH token is absent from the agent env above, so
-          # residual risk is repo-content exfil only). No backticks in this
-          # heredoc: it is unquoted (<<EOF), so backticks would run as commands.
+          # in fabro's settings.toml, not here. No backticks in this heredoc: it
+          # is unquoted (<<EOF), so backticks would run as commands.
+          #
+          # SECURITY REVERSAL (deliberate): the sandbox now has network access and
+          # fabro clones the repo INTO it. The earlier design blocked the network
+          # and pre-cloned on the host, but that left the sandbox /workspace EMPTY
+          # (repo_cloned=false) — the agent saw no code and either produced nothing
+          # or hallucinated. fabro's clone runs `git clone` INSIDE the sandbox, so
+          # it needs both network (network.mode = allow_all) and a token (the
+          # server's GITHUB_TOKEN from fabro.nix). network.mode is a whole-sandbox
+          # property, so the review agent (a local uncensored model) shares that
+          # network for the whole run. Accepted tradeoff: reviewed repos are the
+          # user's own and the token is read-only/minimal-scope; residual risk is
+          # repo-content exfil by a misbehaving model. The host-side clone below
+          # still runs — it gives fabro the cwd git origin to clone from — and both
+          # branch pushes stay disabled so nothing is written back.
           cat >"$work/run.toml" <<EOF
         [workflow]
         graph = "$graph"
 
         [run.environment]
-        network.mode = "block"
+        network.mode = "allow_all"
 
         [run.clone]
-        enabled = false
+        enabled = true
 
         # No push: the server now has a GITHUB_TOKEN (fabro.nix) that the worker
         # requires to start, so fabro would otherwise push run/meta branches to
@@ -150,6 +173,15 @@ in
 
         [run.meta_branch]
         enabled = false
+
+        # The review node is an agent node (type="agent" in the .fabro graph), so
+        # it needs fabro's built-in tool suite (shell/read_file/write_file) to
+        # inspect the repo and write the report. Without this the effective run
+        # settings are fabro_tools=false and the agent gets NO tools — it can only
+        # emit text, never writes REVIEW-FINDINGS.md, and (with no repo context in
+        # the prompt) hallucinates findings about files that don't exist.
+        [run.agent]
+        fabro_tools = true
 
         [run.artifacts]
         include = ["REVIEW-FINDINGS.md"]

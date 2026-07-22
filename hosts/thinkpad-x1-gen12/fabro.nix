@@ -7,6 +7,12 @@
 }:
 let
   fabroLib = import ./fabro-lib.nix { inherit self lib; };
+  # Fabro's agent nodes talk to ollama through the tool-compat shim below
+  # (ollama-tool-shim.service), NOT ollama's port directly: fabro advertises its
+  # apply_patch tool as a freeform `type:"custom"` tool that ollama's OpenAI API
+  # rejects with HTTP 500, killing every agent stage. The shim strips those and
+  # passes everything else straight through to ollama on 11434.
+  toolShimPort = 11501;
   # Fabro derives its (writable) config dir from --config's parent and creates
   # subdirs like environments/ there, so the settings file must live in a
   # fabro-owned dir — NOT read-only /etc. Rendered to the store, then installed
@@ -37,7 +43,7 @@ let
     # omitted — openai already has a default (gpt-*); the run selects this model
     # explicitly via [run.model].
     [llm.providers.openai]
-    base_url = "http://127.0.0.1:11434/v1"
+    base_url = "http://127.0.0.1:${toString toolShimPort}/v1"
 
     [llm.models."qwen36-local"]
     provider     = "openai"
@@ -128,14 +134,48 @@ in
     mode = "0400";
   };
 
+  # Tool-compat shim between fabro and ollama. Stateless, loopback-only, stdlib
+  # Python (no deps). See ollama-tool-shim.py for the full rationale (freeform
+  # `type:"custom"` apply_patch tool -> ollama HTTP 500).
+  systemd.services.ollama-tool-shim = {
+    description = "Fabro<->ollama tool-compat shim (strips freeform custom tools)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "ollama.service" ];
+    wants = [ "ollama.service" ];
+    environment = {
+      SHIM_HOST = "127.0.0.1";
+      SHIM_PORT = toString toolShimPort;
+      SHIM_UPSTREAM = "http://127.0.0.1:11434";
+    };
+    serviceConfig = {
+      ExecStart = "${pkgs.python3}/bin/python3 ${./ollama-tool-shim.py}";
+      DynamicUser = true;
+      Restart = "on-failure";
+      RestartSec = 5;
+      # Hardening: it only needs loopback networking.
+      RestrictAddressFamilies = [
+        "AF_INET"
+        "AF_INET6"
+      ];
+      NoNewPrivileges = true;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+    };
+  };
+
   systemd.services.fabro = {
     description = "Fabro server (local UI + run store)";
     wantedBy = [ "multi-user.target" ];
     after = [
       "network-online.target"
       "ollama.service"
+      "ollama-tool-shim.service"
     ];
-    wants = [ "network-online.target" ];
+    wants = [
+      "network-online.target"
+      "ollama-tool-shim.service"
+    ];
     serviceConfig = {
       User = "fabro";
       Group = "fabro";
