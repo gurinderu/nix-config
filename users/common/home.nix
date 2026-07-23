@@ -14,6 +14,12 @@ in
   ];
 
   programs.home-manager.enable = true;
+
+  # User-local binaries (pipx, cargo-installed tools, ad-hoc scripts) on PATH.
+  # home-manager writes this into hm-session-vars.sh, which zsh sources — the
+  # nix-native equivalent of appending to ~/.profile.
+  home.sessionPath = [ "$HOME/.local/bin" ];
+
   programs.starship = import ./starship.nix;
   programs.zsh = import ./zsh.nix;
   programs.neovim = import ./neovim.nix;
