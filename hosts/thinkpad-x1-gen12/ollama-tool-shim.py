@@ -27,6 +27,34 @@ HOP = {"content-length", "host", "connection", "keep-alive", "transfer-encoding"
 def log(msg):
     print(msg, file=sys.stdout, flush=True)
 
+def _summarize_messages(doc):
+    # PII-safe shape summary of the chat request for diagnosing template-side
+    # 400s (notably Qwen3's `raise_exception('No user query found in messages.')`,
+    # which fires when the message array has NO genuine user turn left — only
+    # system + <tool_response>-wrapped user turns. This happens when the prompt
+    # nears num_ctx and ollama truncates the head, dropping the original goal).
+    # Logs ONLY roles + a genuine-user flag — never message content, so repo
+    # source and secrets never reach the journal.
+    msgs = doc.get("messages")
+    if not isinstance(msgs, list):
+        return "messages: <none>"
+    roles = []
+    genuine_user = 0
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        roles.append(role or "?")
+        if role == "user":
+            c = m.get("content")
+            if isinstance(c, list):
+                c = "".join(p.get("text", "") for p in c if isinstance(p, dict))
+            c = (c or "").strip() if isinstance(c, str) else ""
+            if not (c.startswith("<tool_response>") and c.endswith("</tool_response>")):
+                genuine_user += 1
+    return (f"messages: n={len(roles)} genuine_user={genuine_user} "
+            f"roles=[{','.join(roles)}]")
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *a):
@@ -35,6 +63,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length") or 0)
         body = self.rfile.read(length) if length else b""
         stripped = 0
+        doc = None
         if body and self.path.startswith("/v1/"):
             try:
                 doc = json.loads(body)
@@ -61,6 +90,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if stripped:
             log(f"shim: {self.command} {self.path} stripped {stripped} custom tool(s) -> {resp.status}")
+        if resp.status >= 400 and self.path.startswith("/v1/") and doc is not None:
+            # Upstream rejected the request — dump the PII-safe message shape so a
+            # template-side 400 (e.g. "No user query found") can be diagnosed from
+            # the journal without a live repro. genuine_user=0 pinpoints the goal
+            # being truncated out of the array.
+            log(f"shim: {self.command} {self.path} upstream {resp.status} | {_summarize_messages(doc)}")
         self.send_response(resp.status)
         for k, v in resp.headers.items():
             if k.lower() in HOP:

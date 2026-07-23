@@ -11,8 +11,20 @@
 # ~/.config/sing-box/config.json at activation time; this daemon just points at
 # that file. root reads it regardless of the user-dir permissions, and WatchPaths
 # reloads sing-box whenever home-manager rewrites it.
-{ pkgs, config, ... }:
+{
+  pkgs,
+  config,
+  lib,
+  ...
+}:
 let
+  # The address sing-box's DNS listener binds (users/gurinderu/dns-pin.nix, also
+  # networking.dns in ./configuration.nix). It is not a real interface address,
+  # so we have to install it as an alias ourselves before sing-box can bind it.
+  dnsPin = import ../../users/gurinderu/dns-pin.nix;
+  dnsPinRe = lib.replaceStrings [ "." ] [ "\\." ] dnsPin;
+  dnsServices = lib.concatMapStringsSep " " lib.escapeShellArg config.networking.knownNetworkServices;
+
   configPath = "${config.users.users.gurinderu.home}/.config/sing-box/config.json";
   # The DIRECTORY holding config.json — what sing-box-reload watches. home-manager
   # renders the config to a temp file and mv(1)s it over config.json (atomic
@@ -34,6 +46,28 @@ let
   start = pkgs.writeShellScript "sing-box-start" ''
     mkdir -p ${stateDir}
     chmod 700 ${stateDir}
+
+    # Install the DNS-listener alias on every managed physical interface BEFORE
+    # sing-box starts, or the dns-in inbound cannot bind and the whole config
+    # fails to load (KeepAlive would then crash-loop until something else added
+    # the address — minutes of no VPN at boot, since route.final is fail-closed).
+    #
+    # Doing it here rather than in a separate reconciler is deliberate: this
+    # script also runs on every kickstart, and sing-box-netreload kickstarts on
+    # each network transition — exactly when macOS may have torn the alias down
+    # with the interface. So the repair path and the boot-ordering path are the
+    # same code, with no polling window in between.
+    #
+    # Everything used is on the always-mounted system volume, matching the
+    # wait4path discipline in ProgramArguments below.
+    for svc in ${dnsServices}; do
+      dev=$(/usr/sbin/networksetup -listnetworkserviceorder \
+        | /usr/bin/grep -A1 "^([0-9]*) $svc\$" \
+        | /usr/bin/sed -n 's/.*Device: \([^)]*\)).*/\1/p')
+      [ -n "$dev" ] || continue
+      /sbin/ifconfig "$dev" | /usr/bin/grep -q "inet ${dnsPinRe} " && continue
+      /sbin/ifconfig "$dev" alias ${dnsPin} 255.255.255.255 2>/dev/null || true
+    done
     # On a config reload / darwin-rebuild, launchd boots out the old instance
     # (SIGTERM) and bootstraps this new one. The old sing-box keeps the bbolt
     # flock on cache.db while it drains TUN/connections, so the new process hits

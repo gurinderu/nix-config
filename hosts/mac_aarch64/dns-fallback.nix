@@ -1,9 +1,11 @@
 # Emergency DNS fallback for the fail-closed pin in configuration.nix.
 #
-# The system DNS is pinned to the sing-box TUN (networking.dns = 172.19.0.1).
-# That pin is written into macOS SystemConfiguration and PERSISTS across
-# reboots and even across nix itself dying — while the TUN routes and the
-# sing-box daemon do not. Observed 2026-07-03: a macOS update dropped the
+# The system DNS is pinned to sing-box's own DNS listener (networking.dns, see
+# users/gurinderu/dns-pin.nix). Nothing else answers on that address, so the pin
+# is fail-closed by construction. It is written into macOS SystemConfiguration
+# and PERSISTS across reboots and even across nix itself dying — while the
+# listener, the interface alias it binds, and the sing-box daemon do not.
+# Observed 2026-07-03: a macOS update dropped the
 # darwin-store LaunchDaemon, /nix never mounted, sing-box could not start
 # (its start script blocks in wait4path), and the Mac was left with working
 # IP connectivity but zero DNS — unrecoverable by KeepAlive or the
@@ -18,7 +20,7 @@
 # Design: a stateless reconciler, NOT a marker-based toggle. Each 30s tick it
 # reads the ACTUAL system DNS (networksetup -getdnsservers) and drives it to
 # the state the current TUN reality demands:
-#   - TUN address present  -> DNS must equal the pin (172.19.0.1). If it does
+#   - TUN address present  -> DNS must equal the pin. If it does
 #     not, re-pin. This self-heals the post-reboot fail-open case: an earlier
 #     fallback that got baked into SystemConfiguration is corrected the moment
 #     the TUN returns, with no in-memory marker needed to "remember" it.
@@ -54,10 +56,17 @@
 { config, lib, ... }:
 let
   # Single source of truth: the pin set in configuration.nix.
-  tunDns = lib.head config.networking.dns;
+  wantDns = lib.head config.networking.dns;
+  # Liveness probe for sing-box. NOT the same address as the pin any more: the
+  # pin is an interface alias installed by sing-box's start script
+  # (./sing-box.nix), so it is present whether or not sing-box is healthy and
+  # says nothing about it. The TUN
+  # address does — it exists only while sing-box is running. Keep in sync with
+  # the tun inbound in users/gurinderu/sing-box-config.nix (172.19.0.1/30).
+  tunAddress = "172.19.0.1";
   # Dots escaped for the ifconfig regex so "172.19.0.1" cannot match e.g.
   # "172x19y0z1" on some unrelated interface.
-  tunDnsRe = lib.replaceStrings [ "." ] [ "\\." ] tunDns;
+  tunAddressRe = lib.replaceStrings [ "." ] [ "\\." ] tunAddress;
   fallbackDns = "8.8.8.8 1.1.1.1";
   # networksetup wants the UI service names, same list as knownNetworkServices.
   servicesArr = lib.concatMapStringsSep " " lib.escapeShellArg config.networking.knownNetworkServices;
@@ -65,13 +74,13 @@ let
     FLIP=/var/run/dns-fallback.flip
     DISABLE=/var/run/dns-fallback.disabled
     SERVICES=(${servicesArr})
-    WANT_TUN="${tunDns}"
+    WANT_PIN="${wantDns}"
     WANT_FALLBACK="${fallbackDns}"
 
     log() { echo "$(/bin/date '+%F %T') $1"; }
 
     # Current DNS of the first managed service, normalized to a space-joined
-    # line ("172.19.0.1" or "8.8.8.8 1.1.1.1"). set_dns always writes every
+    # line (the pin, or "8.8.8.8 1.1.1.1"). set_dns always writes every
     # service together, so the first is representative. The "There aren't any
     # DNS Servers set on X." message when unset never equals a wanted value.
     current_dns() {
@@ -97,11 +106,11 @@ let
         continue
       fi
       CUR=$(current_dns)
-      if /sbin/ifconfig | /usr/bin/grep -q 'inet ${tunDnsRe} '; then
+      if /sbin/ifconfig | /usr/bin/grep -q 'inet ${tunAddressRe} '; then
         MISS=0
-        if [ "$CUR" != "$WANT_TUN" ]; then
-          set_dns "$WANT_TUN"
-          log "TUN present, DNS was '$CUR' - re-pinned to $WANT_TUN"
+        if [ "$CUR" != "$WANT_PIN" ]; then
+          set_dns "$WANT_PIN"
+          log "TUN present, DNS was '$CUR' - re-pinned to $WANT_PIN"
         fi
       else
         MISS=$((MISS + 1))

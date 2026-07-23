@@ -53,8 +53,17 @@ let
     enabled      = true
 
     [llm.models."qwen36-local".limits]
-    context_window = 32768
-    max_output     = 8192
+    # MUST match OLLAMA_CONTEXT_LENGTH in night-llm.nix. fabro budgets its
+    # prompt against context_window and only compacts when the prompt would
+    # overflow it; ollama enforces its own num_ctx as a HARD limit and returns
+    # HTTP 400 (exceed_context_size) on any excess. If this is larger than
+    # ollama's window, fabro never compacts and sends requests ollama rejects —
+    # the 2026-07-23 nightly batch died this way (32768 here vs 8192 in ollama;
+    # 10157 / 8694-token requests bounced). Keep both at 16384. max_output is
+    # carved out of context_window, so input budget = 16384 - 4096 = 12288,
+    # which stays inside ollama's 16384 with headroom.
+    context_window = 16384
+    max_output     = 4096
 
     [llm.models."qwen36-local".features]
     tools        = true
