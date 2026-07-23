@@ -6,28 +6,56 @@
     ./dns-fallback.nix
   ];
 
-  # Pin system DNS to the sing-box TUN address (see users/gurinderu/
-  # sing-box-config.nix, tun inbound 172.19.0.1/30 — keep in sync). Without
-  # this, DNS goes to the on-link DHCP resolver and BYPASSES the TUN entirely
-  # (the connected /24-ish route always beats the TUN's /1 chunk routes), so
-  # none of the sing-box DNS design works: no fakeip domain routing, no ECH
-  # blocking, no ts.net rule — and on RU consumer networks the resolver hands
-  # out RKN-poisoned answers (observed: instagram.com -> 127.0.0.1 on
-  # MegaFon). Pinned to the TUN, every query is hijack-dns'ed by sing-box and
-  # the full rule set applies; the `local` DNS server reads the DHCP servers
-  # directly (not resolv.conf), so there is no loop, and the captive-portal
-  # CNA bypasses in the shared config keep portals working.
+  # Pin system DNS to the address sing-box's own DNS listener answers on — an
+  # alias this machine owns on its physical interfaces, NOT the TUN address and
+  # NOT a public resolver. Both alternatives were tried and both are wrong; the
+  # reasoning is worth keeping because neither failure is visible without a
+  # packet capture.
   #
-  # Trade-off: DNS is fail-closed on sing-box like all other traffic already
-  # is (route.final) — same failure domain, healed by KeepAlive plus the
-  # net-observer watchdog. NB: resolv.conf becomes near-constant across
-  # networks, so the sing-box-netreload WatchPaths trigger fires rarely; the
-  # watchdog is the primary recovery path.
+  # The requirement: DNS must not go to the on-link DHCP resolver, because the
+  # connected /24-ish route always beats the TUN's /1 chunk routes, so such
+  # queries bypass the TUN and none of the sing-box DNS design works — no fakeip
+  # domain routing, no ECH blocking, no ts.net rule — while on RU consumer
+  # networks the resolver hands out RKN-poisoned answers (observed:
+  # instagram.com -> 127.0.0.1 on MegaFon).
+  #
+  # Why not the TUN address (172.19.0.1), which was pinned here until
+  # 2026-07-23: macOS derives from this setting BOTH a global resolver and an
+  # interface-SCOPED one (`scutil --dns`: `if_index : 11 (en0), flags: Scoped`).
+  # A scoped query carries IP_BOUND_IF and therefore IGNORES the route table —
+  # it is emitted straight out en0, addressed to a utun-local IP the gateway
+  # routes nowhere, and dies unanswered. Every interface-scoped lookup on the
+  # machine was silently broken: the captive-portal probe (CNA asks once, gets
+  # nothing, gives up, so the login sheet never appears and the network is never
+  # authenticated), tailscaled's control-plane lookups, iCloud's probes. Proven
+  # in a router-side capture at the coworking (18:01:50, ttl 64, no reply, no
+  # retry) and reproduced on an iPhone hotspot. A per-domain /etc/resolver
+  # override does NOT reach these: macOS lists no domain resolvers in the scoped
+  # section at all.
+  #
+  # Why not a public resolver (8.8.8.8), the obvious next guess: it fixes the
+  # scoped path and destroys everything else. Once scoped queries succeed,
+  # mDNSResponder PREFERS that path, so the whole system resolver goes straight
+  # to 8.8.8.8 over the wire and sing-box never sees a query. Measured: `dig`
+  # (unscoped, into the TUN) returned the fakeip 198.18.0.21 while
+  # `dscacheutil` — the path every real application uses — returned the real
+  # 140.82.121.4. The scoped queries dying was load-bearing: it was the only
+  # thing keeping macOS on the unscoped path.
+  #
+  # So the pin has to be an address that is BOTH local to the bound interface
+  # (so scoped queries are delivered instead of transmitted) and served by
+  # sing-box (so the rule set still applies). An alias on the physical NICs is
+  # the only thing that is both. Verified: with the alias up, every query on the
+  # machine — scoped probes and ordinary lookups alike — appeared on lo0 headed
+  # for this address, and nothing leaked to en0.
+  #
+  # Fail-closed is preserved: no sing-box, no listener, no DNS — the same
+  # failure domain as route.final, and the reason dns-fallback.nix still exists.
   networking.knownNetworkServices = [
     "Wi-Fi"
     "USB 10/100/1000 LAN"
   ];
-  networking.dns = [ "172.19.0.1" ];
+  networking.dns = [ (import ../../users/gurinderu/dns-pin.nix) ];
 
   # Split DNS for tailnet names: mDNSResponder sends *.ts.net queries straight
   # to the MagicDNS resolver over the OS route table (via the tailscale utun).

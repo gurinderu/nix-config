@@ -30,14 +30,20 @@ in
       # ollama default num_ctx=4096 rejects that with HTTP 400 "exceeds the
       # available context size", so the agent dies before running a tool. Raise
       # the default context (ollama ignores per-request num_ctx on the OpenAI
-      # path). 8192 clears the ~5 KB agent request with headroom while keeping the
-      # KV cache modest: this host is RAM-constrained (31 GB total, ~21 GB weights,
-      # swap already tight) and 16384 alongside daytime CI froze it hard (OOM). The
-      # nightly path stops the CI runners first (ExecStartPre) which frees RAM, but
-      # 8192 stays the safe default. Bump only after shrinking the resident set or
-      # confirming headroom; a review whose accumulated context exceeds 8192 will
-      # fail with the same HTTP 400.
-      OLLAMA_CONTEXT_LENGTH = "8192";
+      # path). This MUST match the model's declared context_window in fabro.nix:
+      # fabro budgets its prompt against that number and only compacts when it
+      # would overflow, so if fabro believes 32768 while ollama enforces 8192 it
+      # happily sends 10 KB-token requests that ollama hard-rejects (HTTP 400
+      # exceed_context_size) — this is exactly what killed the 2026-07-23 nightly
+      # batch (10157 / 8694 tokens vs 8192). Kept in lockstep at 16384.
+      #
+      # RAM: this host is tight (31 GB total, ~21 GB weights). KV cache at 16384
+      # is ~1.5 GB (~+0.7 GB over 8192) — safe for the nightly path, which stops
+      # the CI runners first (ExecStartPre) freeing ~several GB. An earlier 16384
+      # freeze happened alongside *daytime* CI; MemoryMax=26G now caps ollama's
+      # cgroup so it gets OOM-killed instead of freezing the host. Don't push past
+      # 16384 without shrinking the resident set or re-measuring KV headroom.
+      OLLAMA_CONTEXT_LENGTH = "16384";
     };
   };
 

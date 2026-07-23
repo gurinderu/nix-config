@@ -29,6 +29,16 @@
 #                     recovery look identical (silence), which made the
 #                     2026-07 network-drop incidents hard to diagnose. urltest
 #                     probe failures log at debug and stay invisible either way.
+#   dnsListen         when non-null, an IP to bind a plain-DNS listener on
+#                     (a `direct` inbound on port 53, tcp+udp, routed straight
+#                     into the DNS module). macOS needs this: it derives an
+#                     INTERFACE-SCOPED resolver from the system DNS setting, and
+#                     a scoped query carries IP_BOUND_IF so it ignores the route
+#                     table — it can never enter the TUN. Only an address the
+#                     bound interface itself owns is delivered locally, so the
+#                     Mac pins DNS to an alias on en0 and answers it here. See
+#                     users/gurinderu/dns-pin.nix and the long comment in
+#                     hosts/mac_aarch64/configuration.nix.
 #
 # Secret values are left as placeholder tokens that each host substitutes at
 # activation time, so nothing sensitive ends up in the world-readable Nix store:
@@ -52,6 +62,7 @@
   cacheFilePath ? null,
   clashApi ? false,
   logLevel ? "warn",
+  dnsListen ? null,
 }:
 let
   # Per-server transport map (structural, non-secret). See sing-box-secrets.nix.
@@ -142,6 +153,24 @@ in
         # produces when the bare TLS connection is closed during inactivity.
         type = "https";
         server = "8.8.8.8";
+        # Without a detour the server is dialed DIRECTLY over the default
+        # interface — and RKN-side networks block direct TCP to 8.8.8.8 on both
+        # 443 and 53 (observed 2026-07-15..17: every exchange died with
+        # "dial tcp 8.8.8.8:443: i/o timeout" while UDP/53 and the proxy were
+        # fine). Route the DoH dial through the proxy, where 8.8.8.8 is always
+        # reachable. Bootstrap is safe: the vless servers are raw IPs, so
+        # bringing the proxy up never needs this resolver.
+        detour = "vless-main";
+      }
+      {
+        # Russian public resolver (Yandex.DNS), plain UDP dialed direct over the
+        # default interface. Serves the geosite-category-ru rule below: RU
+        # domains must keep resolving even when the proxy is down, and UDP/53 to
+        # 77.88.8.8 is reachable on RKN-side networks that kill TCP to 8.8.8.8.
+        # As a RU-located anycast it also returns geo-correct CDN answers.
+        tag = "yandex";
+        type = "udp";
+        server = "77.88.8.8";
       }
       {
         tag = "local";
@@ -187,23 +216,57 @@ in
       {
         # Captive-portal probe must resolve via the DHCP resolver so it gets the
         # portal's hijacked IP, not a fakeip routed into an unreachable
-        # vless-auto. Without this the OS never sees the portal and CNA never
-        # comes up.
+        # vless-auto.
+        #
+        # This rule was doubly broken on macOS until 2026-07-23, and both halves
+        # had to be fixed for it to do anything at all:
+        #
+        #   1. The real CNA probe is issued interface-scoped, and a scoped query
+        #      ignores the route table, so it never entered the TUN and never
+        #      reached sing-box — it left en0 addressed to the TUN IP and died.
+        #      Fixed by dnsListen + the en0 alias (see dns-pin.nix).
+        #   2. Even when reached, `server = "local"` LOOPED: on macOS `local`
+        #      forwards to the system resolver, which is sing-box itself, so the
+        #      probe timed out at the 10s deadline.
+        #
+        # Neither half is any use without the other, which is why the portal
+        # never came up despite this rule existing all along.
+        #
+        # Why yandex and not `type: dhcp`, the obvious answer to (2): dhcp was
+        # tried and removed the same day. It works on some networks (an iPhone
+        # hotspot answered in 389ms) and silently does not on others — at the
+        # coworking its DHCP probe hit the deadline while plain unicast to the
+        # very same gateway resolved fine, leaving captive.apple.com hanging 4s,
+        # 8s, 16s per attempt. That is actively harmful here: macOS reassociates
+        # Wi-Fi when DNS fails (inducer@DNSFailureRecovery), so a guaranteed slow
+        # failure manufactures the exact link drops this repo is trying to stop.
+        # A public resolver over plain UDP, dialed direct off the physical NIC,
+        # always answers and still satisfies the requirement above — a real
+        # routable IP, never a fakeip. Behind a portal it yields the portal's
+        # address anyway, since hotspots DNAT udp/53 to themselves.
         domain = [ "captive.apple.com" ];
-        server = "local";
+        server = "yandex";
       }
       {
         # Russian sites must resolve to REAL IPs (not fakeip) so the route rule
         # can send them out direct-out, bypassing the proxy. They cannot use the
-        # `local` resolver here: on macOS the system DNS is the sing-box TUN
-        # itself (172.19.0.1), so `type: local` loops back into sing-box and
-        # every RU lookup dies with "i/o timeout" / "no servers could be
+        # `local` resolver here: on macOS the system DNS was the sing-box TUN
+        # itself (172.19.0.1), so `type: local` looped back into sing-box and
+        # every RU lookup died with "i/o timeout" / "no servers could be
         # reached" — which broke all RU domains while fakeip traffic kept
-        # working. Resolve them over the google DoH server instead (reached via
-        # the proxy); it returns real routable IPs and the geosite-category-ru
-        # route rule still forces the actual connection out direct.
+        # working. (That premise changed: the pin is now a public resolver, and
+        # whether `local` still loops depends on whether it dials over the route
+        # table or interface-bound. UNVERIFIED — recheck before relying on it;
+        # yandex below works either way, so nothing here needs to change yet.) They cannot use the google DoH server either: its dial used
+        # to go DIRECT and RKN-side networks block TCP to 8.8.8.8, which broke
+        # every RU lookup again (2026-07-15..17); now that google detours via
+        # the proxy, pinning RU DNS to it would make RU resolution die whenever
+        # the proxy is down. Yandex over plain UDP is dialed direct, works on
+        # these networks, and returns real routable IPs — the
+        # geosite-category-ru route rule still forces the actual connection out
+        # direct.
         rule_set = [ "geosite-category-ru" ];
-        server = "google";
+        server = "yandex";
       }
       {
         # Tailscale control plane / DERP must resolve to REAL IPs (not fakeip)
@@ -273,7 +336,25 @@ in
       # strict_route (Linux/Windows only; no-op on macOS) arrives via tunExtra.
       // tunExtra
     )
-  ];
+  ]
+  ++ (
+    if dnsListen == null then
+      [ ]
+    else
+      [
+        {
+          # Plain-DNS listener for queries that can never reach the TUN — see the
+          # dnsListen doc at the top. `network` is deliberately unset so both udp
+          # and tcp/53 are served: a truncated answer makes the client retry over
+          # TCP, and a udp-only listener would strand that retry. Both verified
+          # answering 2026-07-23.
+          type = "direct";
+          tag = "dns-in";
+          listen = dnsListen;
+          listen_port = 53;
+        }
+      ]
+  );
   outbounds = [
     {
       type = "direct";
@@ -351,7 +432,23 @@ in
     }
   ];
   route = {
-    rules = [
+    rules =
+      (
+        if dnsListen == null then
+          [ ]
+        else
+          [
+            {
+              # Everything arriving on the DNS listener IS a query — hand it to
+              # the DNS module by inbound tag rather than leaning on the sniffer
+              # below. Deterministic, and it must stay FIRST: hijack-dns is a
+              # final action, so no later rule can steal this traffic.
+              inbound = "dns-in";
+              action = "hijack-dns";
+            }
+          ]
+      )
+      ++ [
       { action = "sniff"; }
       {
         protocol = "dns";

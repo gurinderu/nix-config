@@ -37,6 +37,14 @@ import ./sing-box-config.nix {
   # No podman bridge and no strict_route on macOS (the latter is a Linux/Windows
   # no-op), so extraTunExcludes and tunExtra stay at their empty defaults.
 
+  # Answer plain DNS on the pinned address. macOS cannot be made to send its
+  # interface-scoped queries into the TUN, so sing-box comes out to meet them:
+  # the address is an alias on the physical interfaces (installed by the start
+  # script in hosts/mac_aarch64/sing-box.nix), which makes a scoped query resolve
+  # locally instead of being flung at the gateway. Single source of truth for the
+  # address, shared with networking.dns — a mismatch kills DNS outright.
+  dnsListen = import ./dns-pin.nix;
+
   # Persist the fakeip table across restarts. The launchd daemon
   # (hosts/mac_aarch64/sing-box.nix) runs as root and creates this dir before
   # exec'ing sing-box.
