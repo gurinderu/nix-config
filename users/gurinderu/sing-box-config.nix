@@ -68,6 +68,29 @@ let
   # Per-server transport map (structural, non-secret). See sing-box-secrets.nix.
   transports = (import ./sing-box-secrets.nix).transports;
 
+  # Captive-portal LOGIN domains — the public host a hotspot's login page lives
+  # on (NOT the OS probe host captive.apple.com, handled separately below). These
+  # are the exact same curse as captive.apple.com: before you authenticate the
+  # VPN exits are unreachable, so anything routed to the proxy dies. But the
+  # portal's login page is opened in a NORMAL BROWSER (Safari/Chrome), whose
+  # traffic is not the `Captive Network Assistant` process and is not
+  # captive.apple.com — so with no rule it falls through to the fakeip catch-all
+  # and is routed into an unreachable vless-auto. Result: the login page never
+  # loads (observed repeatedly on wifi.smartspb.net — resolved to 198.18.6.33, a
+  # fakeip). Each entry is forced to (1) resolve via yandex to a REAL IP, not a
+  # fakeip, and (2) route direct-out, exactly like captive.apple.com. Used in
+  # BOTH the DNS rule and the route rule below so the two halves can never drift
+  # — either alone is useless (a real IP still routed to the dead proxy, or a
+  # direct route to an unroutable fakeip).
+  #
+  # This is a per-network allowlist: add the login host of any recurring captive
+  # network here and rebuild. For a truly one-off portal, temporarily flip the
+  # vless-main kill-switch to block-out is NOT enough (that drops, it does not go
+  # direct) — add the host here, it is a one-line change.
+  portalDomains = [
+    "smartspb.net" # St. Petersburg public Wi-Fi (wifi.smartspb.net/login)
+  ];
+
   # One VLESS+Reality outbound per backend server. Hosts substitute the
   # SING_BOX_*_N tokens with decrypted sops secrets at activation time. The
   # transport (tcp XTLS-Vision vs gRPC/gun) is selected per index from the
@@ -245,6 +268,15 @@ in
         # routable IP, never a fakeip. Behind a portal it yields the portal's
         # address anyway, since hotspots DNAT udp/53 to themselves.
         domain = [ "captive.apple.com" ];
+        server = "yandex";
+      }
+      {
+        # Captive-portal LOGIN hosts (see portalDomains above): resolve to a REAL
+        # routable IP via yandex, never a fakeip. Behind the portal the hotspot
+        # DNATs udp/53 to itself, so this yields the portal's own address anyway;
+        # the paired route rule below sends the connection direct-out. Mirrors the
+        # captive.apple.com rule directly above.
+        domain_suffix = portalDomains;
         server = "yandex";
       }
       {
@@ -426,7 +458,10 @@ in
       # and back with '{"name":"vless-auto"}'. interrupt_exist_connections makes
       # the switch take effect on in-flight connections immediately. The routing
       # rules and `final` target THIS outbound, so the switch covers everything
-      # that goes through the proxy.
+      # that goes through the proxy. Deliberately only vless-auto/block-out — no
+      # direct-out member: the kill-switch stays fail-closed (proxy down => drop,
+      # never leak to direct). Captive portals are handled by the portalDomains
+      # direct rule above, not by flipping this selector.
       type = "selector";
       tag = "vless-main";
       outbounds = [
@@ -481,6 +516,16 @@ in
         # yet, so the probe must reach the portal (or the real Apple host)
         # rather than be routed into an unreachable vless-auto.
         domain = [ "captive.apple.com" ];
+        outbound = "direct-out";
+      }
+      {
+        # Captive-portal LOGIN pages go direct: behind the portal the VPN is not
+        # up, so the browser opening wifi.<portal>/login must reach the portal,
+        # not be routed into an unreachable vless-auto. Matched by the sniffed
+        # SNI/Host; the DNS rule above makes the name resolve to a real IP so this
+        # direct route actually goes somewhere. Must sit above the fakeip->vless
+        # rule. See portalDomains for the list and the escape-hatch note.
+        domain_suffix = portalDomains;
         outbound = "direct-out";
       }
       {
