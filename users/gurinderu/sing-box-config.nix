@@ -215,7 +215,30 @@ in
         tag = "fakeip";
         type = "fakeip";
         inet4_range = "198.18.0.0/15";
-        inet6_range = "fc00::/18";
+        # NO inet6_range, deliberately. The TUN is v4-only (address = [
+        # "172.19.0.1/30" ] below), so auto_route installs v4 routes ONLY —
+        # nothing ever routes fc00::/18 and the interface has no v6 address at
+        # all. Handing out AAAA fakeips from that range therefore pointed
+        # clients at addresses with no route (verified 2026-07-24: `dig AAAA`
+        # returned fc00::7 while `netstat -rn -f inet6` had no fc00 entry and
+        # utun7 was absent from the v6 table entirely).
+        #
+        # Chrome prefers IPv6, so this was a coin flip: usually happy eyeballs
+        # papered over it by falling back to v4, but a connect to [fc00::N]:443
+        # was observed being accepted by an UNRELATED utun and then silently
+        # closed — hangs and dropped loads in the browser while curl stayed
+        # fine, which is exactly the asymmetry that makes this hard to spot.
+        #
+        # Dropping the range is the honest fix rather than giving the TUN a v6
+        # address: there is no v6 routing here to carry that traffic anyway.
+        # With no inet6_range, AAAA queries return NOERROR with an empty answer
+        # (measured), so clients go straight to v4 with no fallback delay.
+        # `strategy = "ipv4_only"` on the catch-all rule was tested too and is
+        # redundant — identical empty-AAAA result, so it is not carried here.
+        #
+        # Stale fc00:: entries in the store_fakeip cache.db are NOT a concern:
+        # replaying the old cache against this config was measured to return an
+        # empty AAAA while preserving the v4 mapping, so no wipe is needed.
       }
     ];
     rules = [
