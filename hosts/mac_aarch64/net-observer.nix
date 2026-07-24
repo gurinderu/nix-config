@@ -28,11 +28,16 @@
 #                                   sing-box (the user-visible path)
 #                  sel=...          which urltest member sing-box has selected
 #                                   (Clash API on 127.0.0.1:9090)
+#                  load=...         host load averages 1/5/15 min — the
+#                                   starvation discriminator (see below)
 #
 # Diagnosis by column: gw=FAIL → local network/Wi-Fi down (infra, not us);
 # gw=OK direct=OK vless=OK tun=000 → sing-box is wedged (stale interface
 # monitor or stuck urltest — restart it); vless=FAIL with the rest OK → that
-# proxy server is dead/blocked from this path.
+# proxy server is dead/blocked from this path; tun=000 with load in the tens
+# (2026-07-24: ~31 on 8 cores, swap full) → host starvation of the userspace
+# TUN path — restarts do NOT cure it, watch for repeated ACT kicks minutes
+# apart and inflated direct/nks[rtr] latencies at the cluster edges.
 #
 #   ACT  lines — the built-in watchdog acting on that same diagnosis: when the
 #                wedge signature (tunnel dead while the direct path works)
@@ -457,6 +462,13 @@ let
       # a kickstart; "-" = the daemon is down.
       sb=$(/usr/bin/pgrep -f "sing-box run" 2>/dev/null | /usr/bin/paste -sd, -)
 
+      # Host load (1/5/15 min): tun=000 with the direct path fast AND load in
+      # the tens is host starvation (sing-box scheduling-starved), not a wedge
+      # — a restart won't cure it. Took a log archaeology session to attribute
+      # the 2026-07-24 incident wave to this; now it's one column.
+      load=$(/usr/sbin/sysctl -n vm.loadavg 2>/dev/null \
+        | /usr/bin/awk '{ print $2 "/" $3 "/" $4 }')
+
       vls=""
       vips=$(${jq} -r '[.outbounds[]? | select(.type == "vless") | .server] | unique | join(" ")' \
         "${singBoxConfigPath}" 2>/dev/null)
@@ -476,7 +488,7 @@ let
       site=$(/bin/cat "$dnstmp/site" 2>/dev/null)
       /bin/rm -rf "$dnstmp"
 
-      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
+      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--} load=''${load:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
 
       # --- L2/DHCP state, logged only on change (the "before" timeline) ------
       # gateway ARP entry + DHCP router/DNS; NET line only when it differs from
