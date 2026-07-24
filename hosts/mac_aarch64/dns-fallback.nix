@@ -79,12 +79,41 @@ let
 
     log() { echo "$(/bin/date '+%F %T') $1"; }
 
+    # The managed services macOS currently recognizes, one per line.
+    #
+    # A service disappears from the system entirely when its hardware is absent:
+    # unplug the USB Ethernet dongle and "USB 10/100/1000 LAN" is gone, so every
+    # networksetup call naming it fails with "is not a recognized network
+    # service" + "** Error: The parameters were not valid." That is two lines of
+    # noise per absent service per set_dns, which drowned the real log and hid
+    # genuine failures (observed 2026-07-24).
+    #
+    # Recomputed on each call rather than once at startup: this daemon runs
+    # forever (KeepAlive), so a dongle plugged in later must start having its DNS
+    # managed without waiting for a restart.
+    #
+    # -listallnetworkservices leads with an explanatory header line and prefixes
+    # DISABLED services with "*": drop the header, strip the marker. A disabled
+    # but present service still matches — it is configurable, so it should still
+    # be pinned.
+    live_services() {
+      all=$(/usr/sbin/networksetup -listallnetworkservices 2>/dev/null \
+        | /usr/bin/tail -n +2 | /usr/bin/sed 's/^\*//')
+      for svc in "''${SERVICES[@]}"; do
+        printf '%s\n' "$all" | /usr/bin/grep -qxF "$svc" && printf '%s\n' "$svc"
+      done
+    }
+
     # Current DNS of the first managed service, normalized to a space-joined
     # line (the pin, or "8.8.8.8 1.1.1.1"). set_dns always writes every
     # service together, so the first is representative. The "There aren't any
     # DNS Servers set on X." message when unset never equals a wanted value.
+    # Non-zero exit means no managed service exists at all, so the caller can
+    # skip the tick instead of reconciling against an empty reading.
     current_dns() {
-      /usr/sbin/networksetup -getdnsservers "''${SERVICES[0]}" \
+      svc=$(live_services | /usr/bin/head -1)
+      [ -n "$svc" ] || return 1
+      /usr/sbin/networksetup -getdnsservers "$svc" \
         | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ *$//'
     }
 
@@ -92,9 +121,12 @@ let
     # skips the kickstart it would otherwise do in response to the resolv.conf
     # rewrite we are about to cause. $1 is intentionally unquoted so a
     # multi-server value word-splits into separate networksetup arguments.
+    # Absent services are skipped (see live_services). The read loop is a
+    # pipeline subshell, which is fine here: it only performs side effects and
+    # keeps no state the caller needs, while $1 is inherited as usual.
     set_dns() {
       /usr/bin/touch "$FLIP"
-      for svc in "''${SERVICES[@]}"; do
+      live_services | while IFS= read -r svc; do
         /usr/sbin/networksetup -setdnsservers "$svc" $1
       done
     }
@@ -105,7 +137,14 @@ let
         /bin/sleep 30
         continue
       fi
-      CUR=$(current_dns)
+      # No managed service exists at all right now (Wi-Fi hardware off and no
+      # dongle attached). There is nothing to reconcile, and MISS must not
+      # advance on a reading we were unable to take — otherwise the fallback
+      # would "engage" against a machine that has no interface to set it on.
+      if ! CUR=$(current_dns); then
+        /bin/sleep 30
+        continue
+      fi
       if /sbin/ifconfig | /usr/bin/grep -q 'inet ${tunAddressRe} '; then
         MISS=0
         if [ "$CUR" != "$WANT_PIN" ]; then
