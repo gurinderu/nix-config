@@ -133,6 +133,16 @@ in
     ];
     RunAtLoad = true;
     KeepAlive = true;
+    # Every packet of every app crosses this one userspace process, so it must
+    # keep getting CPU when the machine is thrashing. Without a boost a load
+    # storm (observed 2026-07-24: runaway app + swap full, load ~31 on 8 cores)
+    # starves sing-box: per-packet latency explodes, the TUN path times out
+    # while kernel-path traffic still works, urltest probes jitter into
+    # selector thrash, and the watchdog restart-cycles it without curing
+    # anything. Interactive puts it in the UI QoS band; Nice covers the
+    # plain-priority side.
+    ProcessType = "Interactive";
+    Nice = -10;
     # Don't hammer launchd if it crash-loops (e.g. config not yet rendered on the
     # very first switch — home-manager activation runs after system activation).
     ThrottleInterval = 5;
