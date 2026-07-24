@@ -408,7 +408,13 @@ in
       ];
       url = "https://www.gstatic.com/generate_204";
       interval = "1m";
-      tolerance = 50;
+      # Switch only when another member beats the current one by >150ms. 50ms
+      # was a hair-trigger: with interrupt_exist_connections every switch tears
+      # down live flows, and under host load (2026-07-24) probe jitter alone
+      # made the selector bounce across members for hours. 150ms still clears
+      # the RU exit's handicap by a wide margin (gstatic through a Russian
+      # egress is throttled by hundreds of ms, see vless-out-7 above).
+      tolerance = 150;
       idle_timeout = "30m";
       interrupt_exist_connections = true;
     }
