@@ -376,14 +376,15 @@ in
     (mkVless 4) # 🇵🇱 Poland 1 (tcp)
     (mkVless 5) # 🇵🇱 Poland 2 (grpc)
     (mkVless 6) # 🇵🇱 Poland 3 (grpc)
-    # vless-out-7 is a Russia-located exit (Yandex Cloud, 158.160.x). It IS a
-    # member of the urltest group below, but only as a last-resort fallback:
-    # urltest probes every member against https://www.gstatic.com/generate_204
-    # (a Google host), which is throttled/slow through a Russian egress, so node
-    # 7 measures the highest latency and never wins while any foreign exit is up.
-    # It is picked only when all foreign exits are down — keeping connectivity up
-    # without routing RKN-blocked sites through a Russian egress in normal use.
-    (mkVless 7) # 🇩🇪 Germany bridge 1 (tcp, RU exit)
+    # vless-out-7 ("Germany bridge 1", the Russia-located Yandex Cloud exit,
+    # 158.160.x) is GONE from the config entirely (2026-07-24, user call). It
+    # used to be a latency-penalised last-resort in the urltest group, which
+    # meant an outage of the foreign fleet silently rerouted ALL proxied
+    # traffic — including RKN-blocked sites — through a Russian egress. Now the
+    # fleet is foreign-only and fail-closed: when every member is down, dials
+    # fail and no traffic flows anywhere. To bring the node back as a manual
+    # escape hatch, re-add `(mkVless 7)` here and list "vless-out-7" in the
+    # vless-main selector below; its SING_BOX_*_7 secrets are still provisioned.
     # vless-out-8 is a foreign exit not present in the niao subscription, kept as
     # an extra urltest candidate so the auto group has more foreign backends to
     # fail over between.
@@ -391,9 +392,11 @@ in
     {
       # Route through whichever backend is fastest right now: urltest probes each
       # member on `interval`, picks the lowest-latency one, and fails over
-      # automatically when it slows down or drops. Foreign exits (1,2,3,4,5,6,8)
-      # win in normal use; the RU exit (7) is a latency-penalised last-resort
-      # fallback (see its comment above).
+      # automatically when it slows down or drops. Foreign exits ONLY — the RU
+      # exit (7) is deliberately not a member (see its comment above): when the
+      # whole foreign fleet is down, dials fail and no traffic flows, rather
+      # than silently egressing from Russia. sing-box has no "fallback to
+      # block-out" notion in urltest, so fail-by-dead-dial IS the block here.
       type = "urltest";
       tag = "vless-auto";
       outbounds = [
@@ -403,7 +406,6 @@ in
         "vless-out-4"
         "vless-out-5"
         "vless-out-6"
-        "vless-out-7"
         "vless-out-8"
       ];
       url = "https://www.gstatic.com/generate_204";
@@ -411,9 +413,7 @@ in
       # Switch only when another member beats the current one by >150ms. 50ms
       # was a hair-trigger: with interrupt_exist_connections every switch tears
       # down live flows, and under host load (2026-07-24) probe jitter alone
-      # made the selector bounce across members for hours. 150ms still clears
-      # the RU exit's handicap by a wide margin (gstatic through a Russian
-      # egress is throttled by hundreds of ms, see vless-out-7 above).
+      # made the selector bounce across members for hours.
       tolerance = 150;
       idle_timeout = "30m";
       interrupt_exist_connections = true;
