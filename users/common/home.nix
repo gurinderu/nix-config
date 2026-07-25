@@ -24,13 +24,15 @@ in
   programs.zsh = import ./zsh.nix;
   programs.neovim = import ./neovim.nix;
   programs.git = import ./git.nix;
+  programs.gh = import ./gh.nix;
   programs.direnv = import ./direnv.nix;
   programs.zellij.enable = true;
 
   # Dev CLI tools wanted on every machine. Add a tool here once and it lands on
   # both the mac and the thinkpad. Host-specific GUI apps and infra tooling
   # (docker/kubectl on mac, firefox/jetbrains/llvm on thinkpad) stay in each
-  # host's own module. git/git-lfs come from programs.git above.
+  # host's own module. git/git-lfs come from programs.git above, gh from
+  # programs.gh above.
   home.packages = with pkgs; [
     htop
     btop
@@ -48,7 +50,6 @@ in
     rustup
     sccache
     protobuf
-    gh
     semgrep
     gnupg
     unzip
