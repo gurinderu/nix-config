@@ -76,6 +76,25 @@
       "root"
       "gurinderu"
     ];
+
+    # cache.nixos.org has no direct-out rule, so it resolves to fakeip and the
+    # whole substitution goes out through vless-main like any other foreign
+    # traffic. The VLESS outbounds run plain xtls-rprx-vision with no
+    # multiplexing, so every parallel fetch nix opens is its own TCP +
+    # REALITY handshake against a single node.
+    #
+    # At nix's default of 25 that burst kills the node: on 2026-07-26 20:30 a
+    # `darwin-rebuild switch` opened ~31 concurrent connections and every one
+    # of them died mid-transfer ("Failed sending data to the peer",
+    # SSL_ERROR_SYSCALL) at a different offset, then resumed with 0 bytes
+    # until nix gave up. The sing-box log for that window shows all 124 lines
+    # on one outbound (vless-out-1) with no urltest switch, so this is
+    # per-node connection load and not selector thrash.
+    #
+    # 12 parallel fetches sustain ~40 MB/s aggregate through the same node, so
+    # 8 leaves comfortable headroom. Raise only if the exit gains multiplexing
+    # or cache.nixos.org ever gets routed direct-out.
+    http-connections = 8;
   };
 
   programs.zsh.enable = true;
