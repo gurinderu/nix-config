@@ -25,12 +25,57 @@ import ./sing-box-config.nix {
       process_name = [ "Captive Network Assistant" ];
       outbound = "direct-out";
     }
+    {
+      # NetBird (hosts/mac_aarch64/netbird.nix) is the same shape of problem as
+      # Tailscale above: it carries its own WireGuard encryption, so nothing it
+      # emits should be wrapped in VLESS. Its peer-to-peer and relay traffic is
+      # addressed by raw IP with no domain to match on, so the process rule is
+      # what actually covers it. `netbird` is the daemon, `netbird-ui` the
+      # menu-bar app (which talks to the control plane on its own).
+      #
+      # Unlike Tailscale this is a plain root daemon rather than a system
+      # network-extension, so process matching here is reliable — but the
+      # domain rule below still backs it up.
+      process_name = [
+        "netbird"
+        "netbird-ui"
+      ];
+      outbound = "direct-out";
+    }
+    {
+      # Self-hosted NetBird control plane (management/signal/relay all live
+      # under this domain, e.g. rels://netbird.infrahub.cloudless.dev:443).
+      # Matched by sniffed SNI — every one of those is TLS. Paired with the DNS
+      # rule below, exactly like the Tailscale pair: either half alone is
+      # useless, since a real IP still routed into the proxy fails just as hard
+      # as a fakeip routed direct.
+      domain_suffix = [ "infrahub.cloudless.dev" ];
+      outbound = "direct-out";
+    }
   ];
 
   extraDnsRules = [
     {
       process_name = [ "Captive Network Assistant" ];
       server = "local";
+    }
+    {
+      # NetBird's self-hosted control plane must resolve to a REAL routable IP,
+      # never a fakeip, or the paired direct-out route rule above has nothing
+      # routable to send and the peer never registers. (Measured 2026-07-29
+      # before this rule existed: netbird.infrahub.cloudless.dev -> 198.18.2.192,
+      # a fakeip — and the same answer came back even for an explicit
+      # `dig @77.88.8.8`, since the DNS listener hijacks those too.)
+      #
+      # yandex rather than `local`, which is what the Tailscale rule uses: on
+      # macOS `local` forwards to the system resolver, which is sing-box itself
+      # (networking.dns pins the alias this very config answers on), so it can
+      # loop — that is documented on the captive.apple.com rule, where it timed
+      # out at the 10s deadline. yandex is plain UDP dialed direct off the
+      # physical NIC, so it also keeps working when the proxy is down, which is
+      # the condition under which one is most likely to want the mesh up.
+      domain_suffix = [ "infrahub.cloudless.dev" ];
+      server = "yandex";
     }
   ];
 
