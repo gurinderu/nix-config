@@ -78,6 +78,14 @@
       # rtk (Rust Token Killer) built from source. Exposed per-host so
       # `nix build .#rtk` works and home-manager can reference it.
       packages.aarch64-darwin.rtk = nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/rtk { };
+
+      # netbird: repacked upstream macOS release (daemon + CLI + the 0.75 Wails
+      # desktop app). Exposed so `nix build .#netbird` and
+      # `nix run .#netbird.updateScript` work; the mac host consumes it via
+      # callPackage in hosts/mac_aarch64/netbird.nix.
+      packages.aarch64-darwin.netbird =
+        nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/netbird
+          { };
       packages.x86_64-linux.rtk = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/rtk { };
       packages.x86_64-linux.fabro = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/fabro { };
 

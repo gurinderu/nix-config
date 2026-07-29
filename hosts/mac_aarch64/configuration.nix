@@ -4,6 +4,7 @@
     ./sing-box.nix
     ./net-observer.nix
     ./dns-fallback.nix
+    ./netbird.nix
   ];
 
   # Pin system DNS to the address sing-box's own DNS listener answers on — an
