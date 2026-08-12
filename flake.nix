@@ -87,7 +87,6 @@
         nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/netbird
           { };
       packages.x86_64-linux.rtk = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/rtk { };
-      packages.x86_64-linux.fabro = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/fabro { };
 
       darwinConfigurations."mac_aarch64" = import ./hosts/mac_aarch64 {
         inherit
