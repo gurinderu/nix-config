@@ -48,7 +48,12 @@
 #                MagicDNS pins resolv.conf, and upstream has no fix for the
 #                monitor wedge — observed 15-min outage on 2026-07-03 12:24).
 #                When the whole network is down (direct also failing) a
-#                restart cannot help, so it deliberately does nothing.
+#                restart cannot help, so it deliberately does nothing. Same
+#                for host starvation: above load1 16 the kick is suppressed
+#                and logged as "ACT suppressed" instead, because there the
+#                dead tunnel is a 4s probe losing to the run queue, not a
+#                wedge, and restarting only tears down live flows (see the
+#                gate below for the 2026-07-27 nine-hour restart loop).
 #                Backoff: at most one kickstart per 5 min (a captive portal
 #                can mimic the wedge signature — the kick is harmless there,
 #                the portal flow bypasses the proxy, but don't storm).
@@ -385,6 +390,7 @@ let
     prev_snap=""
     wedge_ticks=0
     last_kick=0
+    last_skip=0
     dns_incident=0
     prev_link_snap=""
     last_good_snap="(none yet)"
@@ -468,6 +474,14 @@ let
       # the 2026-07-24 incident wave to this; now it's one column.
       load=$(/usr/sbin/sysctl -n vm.loadavg 2>/dev/null \
         | /usr/bin/awk '{ print $2 "/" $3 "/" $4 }')
+      # 1-minute figure on its own: the watchdog gates on it below. If sysctl
+      # ever fails the field is empty or "?", which would make the awk gate a
+      # syntax error and silently disable the watchdog for good — fall back to
+      # 0 instead so an unreadable load means "kick", the pre-gate behaviour.
+      load1=''${load%%/*}
+      case "$load1" in
+        "" | *[!0-9.]*) load1=0 ;;
+      esac
 
       vls=""
       vips=$(${jq} -r '[.outbounds[]? | select(.type == "vless") | .server] | unique | join(" ")' \
@@ -574,13 +588,35 @@ let
       else
         wedge_ticks=0
       fi
+      # The wedge signature alone does NOT justify a restart: `tun` is a curl
+      # with a 4s budget, and under host load a perfectly healthy tunnel blows
+      # past it (2026-07-30, measured on the Mac: gstatic 0.94s and youtube
+      # 3.34s at load 65, against ~0.1s idle). Restarting then is actively
+      # harmful — it tears down every live flow and the fresh process is just
+      # as starved, so the kick repeats on the backoff forever. That is what
+      # 2026-07-27 00:26->09:06 was: 99 kicks, 12-13 restarts an hour for nine
+      # hours, every one logging "tunnel dead 7 ticks", none curing anything.
+      # Across 7401 ticks the split is unambiguous: at load1 >= 64 half the
+      # probes fail (51.6%) with even the direct path inflated 7x, while the
+      # 8-32 band is essentially clean (0-0.4%) — so genuine wedges are the
+      # low-load failures, and above the threshold a restart is the wrong tool.
+      # Gate on load1 and the watchdog goes back to covering only the case it
+      # was built for (a stale interface monitor on an otherwise idle host).
       if [ "$wedge_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
         now_s=$(/bin/date +%s)
         if [ $((now_s - last_kick)) -ge 300 ]; then
-          echo "$ts ACT tunnel dead $wedge_ticks ticks, direct path up -> kickstart sing-box"
-          /bin/launchctl kickstart -k system/org.nixos.sing-box
-          last_kick=$now_s
-          wedge_ticks=0
+          if /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
+            echo "$ts ACT tunnel dead $wedge_ticks ticks, direct path up -> kickstart sing-box"
+            /bin/launchctl kickstart -k system/org.nixos.sing-box
+            last_kick=$now_s
+            wedge_ticks=0
+          elif [ $((now_s - last_skip)) -ge 300 ]; then
+            # Deliberately leaves last_kick and wedge_ticks alone: the moment
+            # load drops the next tick kicks immediately, with no backoff to
+            # wait out. last_skip only rate-limits this line to one per 5 min.
+            echo "$ts ACT suppressed: tunnel dead $wedge_ticks ticks but load1=$load1 -> host starvation, restart would not cure it"
+            last_skip=$now_s
+          fi
         fi
       fi
 
