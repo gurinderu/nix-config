@@ -26,6 +26,34 @@ import ./sing-box-config.nix {
       outbound = "direct-out";
     }
     {
+      # EXCEPTION to the netbird direct-out bypass below, and it must stay ABOVE
+      # it — first matching rule wins. The daemon's gRPC session to the
+      # self-hosted control plane goes through the proxy; everything else it
+      # emits stays direct.
+      #
+      # Why: the direct path to this host is broken. TLS completes in ~0.2s and
+      # then nothing comes back — measured 2026-08-19 on an iPhone hotspot,
+      # `curl --interface en0` to /api/users timed out at 15s with 0 bytes,
+      # while the same request through the proxy returned in 0.9s. This is the
+      # same degradation the note further down records for the dashboard
+      # (responses over ~16 KB dropped with ERR_CONNECTION_CLOSED); it has since
+      # grown from truncation into a full stall. The effect on the daemon is
+      # that management dial hits its 30s deadline and retries forever, so the
+      # peer never registers and `netbird up` appears to hang.
+      #
+      # Scope is deliberately narrow: the WireGuard peer and relay traffic is
+      # addressed by raw IP with no domain to match on, so it falls through to
+      # the process rule below and is NOT double-encrypted. Matching here works
+      # via SNI sniffing — the DNS rule below returns a real IP for this host,
+      # not a fakeip, so there is a genuine TLS ClientHello to sniff.
+      process_name = [
+        "netbird"
+        "netbird-ui"
+      ];
+      domain = [ "netbird.infrahub.cloudless.dev" ];
+      outbound = "vless-main";
+    }
+    {
       # NetBird (hosts/mac_aarch64/netbird.nix) is the same shape of problem as
       # Tailscale above: it carries its own WireGuard encryption, so nothing it
       # emits should be wrapped in VLESS. Its peer-to-peer and relay traffic is
@@ -42,16 +70,17 @@ import ./sing-box-config.nix {
       ];
       outbound = "direct-out";
     }
-    {
-      # Self-hosted NetBird control plane (management/signal/relay all live
-      # under this domain, e.g. rels://netbird.infrahub.cloudless.dev:443).
-      # Matched by sniffed SNI — every one of those is TLS. Paired with the DNS
-      # rule below, exactly like the Tailscale pair: either half alone is
-      # useless, since a real IP still routed into the proxy fails just as hard
-      # as a fakeip routed direct.
-      domain_suffix = [ "infrahub.cloudless.dev" ];
-      outbound = "direct-out";
-    }
+    # NOTE: there is deliberately NO domain rule for the control-plane host
+    # here. The daemon is already covered by the process_name rule above, which
+    # is the half that actually matters (its peer/relay traffic is raw IP with
+    # no domain to match on anyway). A domain rule would additionally drag the
+    # BROWSER's calls to the same host — the dashboard's own API — onto the
+    # direct path, and that path drops any response over ~16 KB with
+    # ERR_CONNECTION_CLOSED (measured 2026-08-19: a 41 KB asset stalled at
+    # ~18 KB here and completed in 0.4s from another network). That left the
+    # dashboard spinning forever on /api/users. The paired DNS rule below still
+    # returns a REAL IP so the daemon's direct route has somewhere to go;
+    # browser traffic to that same IP simply falls through to `final`.
   ];
 
   extraDnsRules = [
@@ -74,7 +103,10 @@ import ./sing-box-config.nix {
       # out at the 10s deadline. yandex is plain UDP dialed direct off the
       # physical NIC, so it also keeps working when the proxy is down, which is
       # the condition under which one is most likely to want the mesh up.
-      domain_suffix = [ "infrahub.cloudless.dev" ];
+      # Control-plane host only — the dashboard must keep getting a fakeip so
+      # it goes through the proxy. This real IP exists for the daemon's
+      # process_name bypass; see the note where that route rule used to be.
+      domain = [ "netbird.infrahub.cloudless.dev" ];
       server = "yandex";
     }
   ];
