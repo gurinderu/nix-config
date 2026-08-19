@@ -11,6 +11,7 @@ in
   imports = [
     ./codebase-memory-ui.nix
     ./rtk.nix
+    ./rust.nix
   ];
 
   programs.home-manager.enable = true;
