@@ -26,8 +26,6 @@
     ll = "eza -la --icons";
     ping = "prettyping";
   };
-  initContent = ''
-    export RUSTC_WRAPPER="$(which sccache)"
-    export SCCACHE_CACHE_SIZE="32G"
-  '';
+  # sccache's RUSTC_WRAPPER/SCCACHE_CACHE_SIZE moved to users/common/rust.nix,
+  # where they live next to the cargo profile that makes caching possible.
 }
