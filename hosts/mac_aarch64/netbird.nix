@@ -47,6 +47,17 @@ let
     mkdir -p ${stateDir} ${logDir}
     chmod 700 ${stateDir}
 
+    # Stops netbird binding its outbound control-plane sockets straight to the
+    # physical interface (the "system supports advanced routing" path). That
+    # bind is what let management/signal/relay bypass the sing-box TUN entirely
+    # — visible in client.log as connections from the en0 address rather than
+    # the TUN's 172.19.0.1 — which put them on the direct path no route rule
+    # could reach. With it off they follow the normal routing table into the
+    # TUN, where the control-plane rule in users/gurinderu/sing-box-config-darwin.nix
+    # sends them through the proxy. Peer/relay traffic is raw IP with no domain
+    # to match, so it still falls through to direct.
+    export NB_DISABLE_CUSTOM_ROUTING=true
+
     exec ${netbird}/bin/netbird service run \
       --log-level info \
       --daemon-addr unix:///var/run/netbird.sock \
