@@ -8,8 +8,33 @@ let
   # Pool of parallel ephemeral runners. The box (ThinkPad X1 Gen 12, 16C/22T, 31 GiB)
   # comfortably runs 3 heavy jobs at once; within a single PR this lets Build/Clippy/CRAP
   # (heavy) plus fmt/cargo-deny (light) run in parallel instead of serialising on one runner.
-  runnerIds = lib.range 1 3;
-  runnerName = n: "warp-${toString n}"; # systemd unit: github-runner-warp-${n}
+  # One entry per repository this box serves. `count` is the number of parallel
+  # ephemeral runners for that repo. Total across repos should stay ≲4 so heavy
+  # cargo jobs don't starve each other for RAM.
+  repos = [
+    {
+      repo = "warp";
+      count = 3;
+    }
+    {
+      repo = "trading";
+      count = 1;
+    }
+  ];
+  # Flattened instance list: { repo, n, idx } where idx is global (used for the
+  # per-instance sccache port, which must be unique across ALL runners on the host).
+  runners = lib.concatLists (
+    lib.imap0 (
+      ri: r:
+      map (n: {
+        inherit (r) repo;
+        inherit n;
+        idx = (lib.foldl (acc: x: acc + x.count) 0 (lib.take ri repos)) + n;
+      }) (lib.range 1 r.count)
+    ) repos
+  );
+  runnerName = r: "${r.repo}-${toString r.n}"; # systemd unit: github-runner-<repo>-<n>
+  runnerUser = r: "gh-runner-${runnerName r}";
 
   # Runner job-started hook (ACTIONS_RUNNER_HOOK_JOB_STARTED). Does two things,
   # in one script because the runner accepts a single hook path; the store path
@@ -66,12 +91,12 @@ let
   '';
 
   # One ephemeral runner instance.
-  mkRunner = n: {
+  mkRunner = r: {
     enable = true;
-    url = "https://github.com/gurinderu/warp";
+    url = "https://github.com/gurinderu/${r.repo}";
     tokenFile = config.sops.secrets.github_runner_warp_token.path;
     ephemeral = true; # fresh runner per job, auto re-registration
-    name = "nixos-thinkpad-${toString n}"; # GitHub runner names must be unique per instance
+    name = "nixos-thinkpad-${toString r.n}"; # GitHub runner names must be unique per repo
     extraLabels = [
       "nixos"
       "thinkpad"
@@ -90,8 +115,8 @@ let
     # /var/cache/<name> owned by this user (no `private` indirection, no
     # per-activation re-chown), removing that failure class. Per-instance user
     # keeps the isolation DynamicUser gave each runner.
-    user = "gh-runner-warp-${toString n}";
-    group = "gh-runner-warp-${toString n}";
+    user = runnerUser r;
+    group = runnerUser r;
 
     # Isolated from the system/home-manager profiles, so duplicating packages the host
     # user also has is intentional. `docker-client` talks to the Podman socket.
@@ -114,13 +139,13 @@ let
       # the shared-IP anonymous rate limit); the workflow's `docker login
       # ghcr.io` merges its entry into the same file. Under CacheDirectory so it
       # is writable and persists across the instance's jobs.
-      DOCKER_CONFIG = "/var/cache/github-runner-warp-${toString n}/docker";
+      DOCKER_CONFIG = "/var/cache/github-runner-${runnerName r}/docker";
       # Per-instance caches: a SHARED CARGO_HOME across concurrent runners races the
       # cargo package-cache lock ("failed to acquire package cache lock"). Each runner
       # keeps its own rustup/cargo/sccache, warmed across its jobs via CacheDirectory.
-      RUSTUP_HOME = "/var/cache/github-runner-warp-${toString n}/rustup";
-      CARGO_HOME = "/var/cache/github-runner-warp-${toString n}/cargo";
-      SCCACHE_DIR = "/var/cache/github-runner-warp-${toString n}/sccache";
+      RUSTUP_HOME = "/var/cache/github-runner-${runnerName r}/rustup";
+      CARGO_HOME = "/var/cache/github-runner-${runnerName r}/cargo";
+      SCCACHE_DIR = "/var/cache/github-runner-${runnerName r}/sccache";
       # Build cargo target/ on disk AND on an exec-capable mount. Under DynamicUser
       # systemd mounts CacheDirectory/StateDirectory (/var/cache,/var/lib) noexec,
       # so build scripts / proc-macros in target/ there die with "Permission denied
@@ -134,9 +159,9 @@ let
       # 4226, so two concurrent jobs collide and the loser dies with
       # "sccache: failed to spawn ... (exit 254)", failing whichever job was
       # compiling (usually the heavy Workspace-tests job). Per-instance port
-      # (warp-1=4226, warp-2=4227, warp-3=4228) lets the parallel servers
-      # coexist. Inherited by the job steps, so no per-repo ci.yml change needed.
-      SCCACHE_SERVER_PORT = toString (4225 + n);
+      # (warp-1=4226, warp-2=4227, warp-3=4228, trading-1=4229) lets the parallel
+      # servers coexist. Inherited by the job steps, so no per-repo ci.yml change needed.
+      SCCACHE_SERVER_PORT = toString (4225 + r.idx);
       # Runner runs this before every job -> seed docker.io auth + sweep leaked
       # Testcontainers from prior jobs (see jobStarted).
       ACTIONS_RUNNER_HOOK_JOB_STARTED = "${jobStarted}";
@@ -153,7 +178,7 @@ let
       # group actually grants socket access.
       PrivateUsers = false;
       # Writable, restart-persistent cache for rustup/cargo/sccache (per instance).
-      CacheDirectory = "github-runner-warp-${toString n}";
+      CacheDirectory = "github-runner-${runnerName r}";
 
       # The module sets Restart="on-success" for ephemeral runners, so a failed
       # re-registration (e.g. ExecStartPre overran TimeoutStartSec) leaves the unit dead
@@ -179,9 +204,9 @@ let
   # unit when its listener has had no :443 connection for a while. A busy runner always
   # holds live connections, so this never interrupts a running job.
   mkWatchdogService =
-    n:
+    r:
     let
-      unit = "github-runner-${runnerName n}.service";
+      unit = "github-runner-${runnerName r}.service";
     in
     {
       description = "Restart ${unit} when its listener loses the GitHub connection";
@@ -209,7 +234,7 @@ let
         fi
       '';
     };
-  mkWatchdogTimer = _n: {
+  mkWatchdogTimer = _r: {
     wantedBy = [ "timers.target" ];
     timerConfig = {
       OnBootSec = "3min";
@@ -217,10 +242,12 @@ let
     };
   };
 
-  forEachRunner = f: lib.listToAttrs (map f runnerIds);
+  forEachRunner = f: lib.listToAttrs (map f runners);
 in
 {
-  # Classic PAT (scope `repo`) used to register the runners; shared by all instances.
+  # Classic PAT (scope `repo`) used to register the runners; shared by all instances
+  # and all repos (a classic `repo`-scoped PAT can register runners on any repo the
+  # account owns, so warp and trading use the same one).
   # tokenFile is read by root in ExecStartPre, so the sops secret's root:0400 is enough.
   sops.secrets.github_runner_warp_token = { };
 
@@ -240,34 +267,34 @@ in
     mode = "0440";
   };
 
-  services.github-runners = forEachRunner (n: lib.nameValuePair (runnerName n) (mkRunner n));
+  services.github-runners = forEachRunner (r: lib.nameValuePair (runnerName r) (mkRunner r));
 
   # Fixed system users/groups backing each runner's `user`/`group` (the
   # github-runners module runs the service as them but does NOT create them).
   # isSystemUser keeps them in the system uid range, out of login space.
-  users.groups = forEachRunner (n: lib.nameValuePair "gh-runner-warp-${toString n}" { });
+  users.groups = forEachRunner (r: lib.nameValuePair (runnerUser r) { });
   users.users = forEachRunner (
-    n:
-    lib.nameValuePair "gh-runner-warp-${toString n}" {
+    r:
+    lib.nameValuePair (runnerUser r) {
       isSystemUser = true;
-      group = "gh-runner-warp-${toString n}";
-      description = "GitHub Actions runner warp-${toString n}";
+      group = runnerUser r;
+      description = "GitHub Actions runner ${runnerName r}";
     }
   );
 
   systemd.services = lib.mkMerge [
     (forEachRunner (
-      n: lib.nameValuePair "github-runner-${runnerName n}-watchdog" (mkWatchdogService n)
+      r: lib.nameValuePair "github-runner-${runnerName r}-watchdog" (mkWatchdogService r)
     ))
     # StartLimitIntervalSec lives in [Unit], not [Service], so it can't go through
     # serviceOverrides. Disable the start-rate limiter so repeated start failures can
     # never wedge a unit into `failed` (start-limit-hit).
     (forEachRunner (
-      n: lib.nameValuePair "github-runner-${runnerName n}" { startLimitIntervalSec = 0; }
+      r: lib.nameValuePair "github-runner-${runnerName r}" { startLimitIntervalSec = 0; }
     ))
   ];
 
   systemd.timers = forEachRunner (
-    n: lib.nameValuePair "github-runner-${runnerName n}-watchdog" (mkWatchdogTimer n)
+    r: lib.nameValuePair "github-runner-${runnerName r}-watchdog" (mkWatchdogTimer r)
   );
 }
