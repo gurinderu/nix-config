@@ -94,7 +94,7 @@ let
   mkRunner = r: {
     enable = true;
     url = "https://github.com/gurinderu/${r.repo}";
-    tokenFile = config.sops.secrets.github_runner_warp_token.path;
+    tokenFile = config.sops.secrets.github_runner_token.path;
     ephemeral = true; # fresh runner per job, auto re-registration
     name = "nixos-thinkpad-${toString r.n}"; # GitHub runner names must be unique per repo
     extraLabels = [
@@ -249,7 +249,7 @@ in
   # and all repos (a classic `repo`-scoped PAT can register runners on any repo the
   # account owns, so warp and trading use the same one).
   # tokenFile is read by root in ExecStartPre, so the sops secret's root:0400 is enough.
-  sops.secrets.github_runner_warp_token = { };
+  sops.secrets.github_runner_token = { };
 
   # Docker Hub credentials (username + a read-only access token) the job-started
   # hook bakes into each runner's $DOCKER_CONFIG so buildx pulls base images
