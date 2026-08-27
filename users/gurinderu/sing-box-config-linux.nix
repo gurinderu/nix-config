@@ -4,10 +4,13 @@ import ./sing-box-config.nix {
   # On Linux the Tailscale daemon process is `tailscaled`.
   tailscaleProcs = [ "tailscaled" ];
 
-  # Podman's default bridge. Without this the TUN swallows container traffic
-  # (10.88.x.x and its DNAT'd published ports), so the CI runner's tests can't
-  # reach their own Testcontainers Postgres and fail/leak. Keep it off the VPN.
-  extraTunExcludes = [ "10.88.0.0/16" ];
+  # Podman bridges. Without this the TUN swallows container traffic (and its
+  # DNAT'd published ports), so the CI runner's tests can't reach their own
+  # Postgres and time out. 10.88.0.0/16 is the default `podman` network;
+  # 10.89.0.0/16 is where netavark carves per-network /24s for `docker network
+  # create` (GitHub Actions makes one per job, Testcontainers too) — the pool
+  # is pinned to exactly that range in hosts/thinkpad-x1-gen12/configuration.nix.
+  extraTunExcludes = [ "10.88.0.0/15" ];
 
   # strict_route enforces routing on Linux (unsupported networks become
   # unreachable), preventing leaks around the TUN.
