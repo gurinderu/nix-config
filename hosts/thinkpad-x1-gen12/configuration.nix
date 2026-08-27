@@ -123,6 +123,14 @@
       dockerSocket.enable = true; # docker-compatible socket at /run/docker.sock
       defaultNetwork.settings.dns_enabled = true; # DNS between containers
     };
+    # Pin the subnet pool for user-created networks (GitHub Actions per-job
+    # networks, Testcontainers) to 10.89.0.0/16 so it stays inside the
+    # 10.88.0.0/15 that sing-box's TUN excludes (users/gurinderu/
+    # sing-box-config-linux.nix). netavark's built-in pool would otherwise
+    # spill into 10.90.0.0/15 and beyond, which auto_route sends to tun0.
+    containers.containersConf.settings.network.default_subnet_pools = [
+      { base = "10.89.0.0/16"; size = 24; }
+    ];
     libvirtd = {
       enable = true;
       qemu = {
