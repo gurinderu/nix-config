@@ -67,8 +67,8 @@
 #                  touch /var/lib/net-observer/watchdog-off
 #
 # Request drop-box — /var/lib/net-observer/requests/, sticky-world-writable so
-# the SwiftBar menu-bar plugin (users/gurinderu/swiftbar.nix) can ask without
-# sudo. Only file NAMES are read, never contents:
+# an unprivileged reader can ask without sudo. Only file NAMES are read, never
+# contents:
 #   freeze     one-shot: copy the pcap ring out now (consumed)
 #   snapshot   one-shot: SNAP block — wdutil radio view, DHCP packet, ARP table
 #              size + sample, direct reachability, per-network private MAC. This
@@ -472,9 +472,10 @@ let
 
     echo "$(/bin/date '+%F %T') START net-observer"
     /bin/mkdir -p /var/lib/net-observer
-    # Request drop-box for the menu-bar widget (see users/gurinderu/swiftbar.nix).
-    # The plugin runs as the login user and must not need sudo just to ask for a
-    # capture freeze, so this one directory is sticky-world-writable while
+    # Request drop-box for unprivileged callers (a terminal, or the menu-bar app
+    # once it learns to drive this daemon). They run as the login user and must
+    # not need sudo just to ask for a capture freeze, so this one directory is
+    # sticky-world-writable while
     # /var/lib/net-observer itself stays root-owned 755. Only file NAMES are
     # honoured, never contents, and every request maps to a read-only action —
     # the worst a stray file achieves is an extra frozen capture.
