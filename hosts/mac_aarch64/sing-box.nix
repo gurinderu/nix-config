@@ -22,6 +22,7 @@ let
   # networking.dns in ./configuration.nix). It is not a real interface address,
   # so we have to install it as an alias ourselves before sing-box can bind it.
   dnsPin = import ../../users/gurinderu/dns-pin.nix;
+  fakeipRange = import ../../users/gurinderu/fakeip-range.nix;
   dnsPinRe = lib.replaceStrings [ "." ] [ "\\." ] dnsPin;
   dnsServices = lib.concatMapStringsSep " " lib.escapeShellArg config.networking.knownNetworkServices;
 
@@ -82,6 +83,30 @@ let
       /bin/sleep 1
       i=$((i + 1))
     done
+
+    # Stale-fakeip guard. cache.db is opened with store_fakeip, so every
+    # domain->address mapping survives restarts BY DESIGN — that is what keeps a
+    # long-lived connection valid across a reload. It also means that after the
+    # pool changes (see ../../users/gurinderu/fakeip-range.nix), every cached
+    # mapping still points into the OLD range, and sing-box keeps serving those
+    # answers: the config says one thing and DNS says another, for exactly the
+    # domains you use most. Nothing surfaces the mismatch — it looks like "some
+    # sites are broken again", the same symptom the range change was meant to
+    # cure.
+    #
+    # So stamp the pool next to the cache and wipe the cache when it moves. Only
+    # on an actual change: a wipe costs every existing mapping, so it must not
+    # happen on ordinary restarts. Missing stamp with an existing cache = a cache
+    # from before this guard existed, whose range is unknown — wipe it once.
+    stamp=${stateDir}/fakeip-range
+    if [ "$(/bin/cat "$stamp" 2>/dev/null)" != "${fakeipRange}" ]; then
+      if [ -e ${stateDir}/cache.db ]; then
+        echo "sing-box: fakeip pool is now ${fakeipRange}; dropping cache.db with its stale mappings" >&2
+        /bin/rm -f ${stateDir}/cache.db
+      fi
+      printf '%s' "${fakeipRange}" > "$stamp"
+    fi
+
     exec ${pkgs.sing-box}/bin/sing-box run -c ${configPath}
   '';
 
