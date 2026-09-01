@@ -65,6 +65,13 @@ nix-darwin.lib.darwinSystem {
           # Menu bar manager — hides/collapses status icons so they stop
           # disappearing behind the notch. Free Bartender alternative.
           "jordanbaird-ice"
+          # Menu bar plugin runner. Hosts the net-observer readout (see
+          # ../../users/gurinderu/swiftbar.nix): the gateway RTT from the
+          # daemon's last TICK, plus one-click "freeze the pcap ring now".
+          # The coworking gateway fails by ramping over ~40s, so the number
+          # in the bar is an early warning; noticing it in the log means
+          # reading the log, which happens after the network is already gone.
+          "swiftbar"
         ];
         onActivation = {
           # Taps are pinned to the nix store (read-only, root-owned) via the
@@ -94,7 +101,12 @@ nix-darwin.lib.darwinSystem {
         };
       };
     }
-    {
+    (
+      # Takes `config` because the SwiftBar plugin directory below is derived
+      # from the user's home rather than hardcoded; the other module blocks in
+      # this list are plain attrsets and need no arguments.
+      { config, ... }:
+      {
       # Launch Ice (menu bar manager) at login, declaratively, instead of
       # relying on its in-app "Launch at login" toggle.
       launchd.user.agents.ice.serviceConfig = {
@@ -103,6 +115,30 @@ nix-darwin.lib.darwinSystem {
         KeepAlive = false;
         ProcessType = "Interactive";
       };
-    }
+
+      # Same treatment for SwiftBar: launch at login declaratively rather than
+      # through its in-app toggle, so a fresh machine gets the net-observer
+      # readout from the first switch instead of from someone remembering.
+      launchd.user.agents.swiftbar.serviceConfig = {
+        ProgramArguments = [ "/Applications/SwiftBar.app/Contents/MacOS/SwiftBar" ];
+        RunAtLoad = true;
+        KeepAlive = false;
+        ProcessType = "Interactive";
+      };
+
+      # SwiftBar's plugin folder, declared rather than picked in its first-run
+      # dialog. Without this the app opens a folder chooser on launch and the
+      # home.file-deployed plugin is simply never found — the widget would look
+      # broken on a fresh machine with nothing in any log to say why.
+      # PluginDirectory must be a literal path: SwiftBar reads it as a string
+      # and does no ~ expansion.
+      system.defaults.CustomUserPreferences."com.ameba.SwiftBar" = {
+        PluginDirectory = "${config.users.users.gurinderu.home}/.config/swiftbar/plugins";
+        # Skip the "choose a plugin folder" first-run flow that would otherwise
+        # overwrite the directory set above.
+        SwiftBarLaunchedBefore = true;
+      };
+      }
+    )
   ];
 }
