@@ -32,6 +32,20 @@ nix-darwin.lib.darwinSystem {
           ];
         };
     }
+    # net-observerd: the Rust rewrite of the shell observer. It runs ALONGSIDE
+    # hosts/mac_aarch64/net-observer.nix, deliberately — that shell daemon is the
+    # behavioural oracle the rewrite is checked against, and its watchdog
+    # kickstart is still the only auto-recovery on this machine. Retiring it is a
+    # separate, later step, and not before an acting handler replaces the
+    # watchdog.
+    #
+    # The two must not share a log: the module's logFile therefore defaults to
+    # /var/log/net-observerd.log while the shell daemon keeps
+    # /var/log/net-observer.log. launchd opens StandardOutPath itself and two jobs
+    # pointed at one file interleave, which would corrupt the very record the
+    # migration is being judged against.
+    inputs.net-observer.darwinModules.default
+    { services.net-observer.enable = true; }
     inputs.nix-homebrew.darwinModules.nix-homebrew
     {
       nix-homebrew = {
