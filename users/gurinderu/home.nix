@@ -16,7 +16,7 @@
     ./sing-box.nix
     ./opencode.nix
     ./meridian.nix
-    ./netdiag.nix
+    ./swiftbar.nix
     #./zed.nix
   ];
 

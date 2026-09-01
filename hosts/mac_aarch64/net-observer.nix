@@ -19,7 +19,13 @@
 #   TICK lines — every ~15s, independent probes of each layer, bound to the
 #                physical interface where needed so the sing-box TUN cannot
 #                mask or fake the result:
-#                  gw(...)          ping the default gateway (link layer)
+#                  gw(...)          ping the default gateway (link layer),
+#                                   reported as OK(N.Nms) — the RTT, not a
+#                                   boolean: the coworking gateway fails by
+#                                   RAMPING (reply time climbs ~40s, then
+#                                   stops), which a bare OK/FAIL column hides.
+#                                   FAIL, NOGW (no default gateway) or QUIET
+#                                   (probe withheld, see the drop-box below).
 #                  direct[1.1.1.1]  TCP :443 bound to the physical interface
 #                                   (ISP path, bypasses the TUN via IP_BOUND_IF)
 #                  vless[ip]        same, per VLESS server from the rendered
@@ -59,6 +65,22 @@
 #                the portal flow bypasses the proxy, but don't storm).
 #                Kill switch without a rebuild:
 #                  touch /var/lib/net-observer/watchdog-off
+#
+# Request drop-box — /var/lib/net-observer/requests/, sticky-world-writable so
+# the SwiftBar menu-bar plugin (users/gurinderu/swiftbar.nix) can ask without
+# sudo. Only file NAMES are read, never contents:
+#   freeze     one-shot: copy the pcap ring out now (consumed)
+#   snapshot   one-shot: SNAP block — wdutil radio view, DHCP packet, ARP table
+#              size + sample, direct reachability, per-network private MAC. This
+#              is what the hand-run netdiag.sh did and nothing else recorded;
+#              its ARP/DHCP/CoreCapture half was already covered by GWD, which
+#              is why that script is gone. (consumed)
+#   quiet      persistent: stop addressing the gateway — no ICMP echo (gw=QUIET)
+#              and no forced who-has in the incident dump. For gathering a
+#              capture that cannot be dismissed as "your machine is hammering
+#              the gateway" (2026-08-26: 16 of 28 who-has 10.20.0.1 were ours).
+#              Incident detection stays live under quiet via the direct probe;
+#              ordinary traffic still traverses the gw, so quiet is not silence.
 #   DNS  lines — one-shot detail dump when a tick's DNS probes look anomalous
 #                (dns_anomaly below): mDNSResponder cache for the probe domain
 #                (a fakeip address there = poisoned cache) and the active
@@ -328,10 +350,23 @@ let
         # Drop the entry and re-ping: does the MAC re-resolve? (incomplete after
         # this = ARP/L2 dead — private-MAC/reply-only; resolves but ping fails =
         # the gw filters us.) This mutates the ARP cache, which can also unstick
-        # a stale entry — the same trick netdiag.sh uses, done deliberately.
-        /usr/sbin/arp -d "$3" >/dev/null 2>&1
-        if /sbin/ping -c 2 -t 2 "$3" >/dev/null 2>&1; then fp=OK; else fp=FAIL; fi
-        echo "$1 GWD force-arp: arp -d + ping = $fp; $(/usr/sbin/arp -an 2>/dev/null | /usr/bin/grep -F "($3)" || echo '(still no entry)')"
+        # a stale entry — the same trick the old netdiag.sh used, deliberately.
+        #
+        # Skipped under quiet. This probe is the single loudest thing the daemon
+        # does at the gateway: `arp -d` guarantees a fresh who-has broadcast and
+        # the ping adds two more ICMP, all of it emitted at the exact moment a
+        # capture is running to prove the gateway is failing. In the 2026-08-26
+        # window 16 of the 28 `who-has 10.20.0.1` frames were this host's — the
+        # single fact that let the network admin dismiss the capture. Log the
+        # skip rather than going quiet about it: SKIP is a verdict, and a
+        # missing force-arp line must not read as "the dump did not run".
+        if [ -f /var/lib/net-observer/requests/quiet ]; then
+          echo "$1 GWD force-arp: SKIP (quiet — arp -d + ping withheld so this host emits no gateway ARP/ICMP into its own capture)"
+        else
+          /usr/sbin/arp -d "$3" >/dev/null 2>&1
+          if /sbin/ping -c 2 -t 2 "$3" >/dev/null 2>&1; then fp=OK; else fp=FAIL; fi
+          echo "$1 GWD force-arp: arp -d + ping = $fp; $(/usr/sbin/arp -an 2>/dev/null | /usr/bin/grep -F "($3)" || echo '(still no entry)')"
+        fi
       else
         echo "$1 GWD arp: (no default gateway)"
       fi
@@ -346,6 +381,61 @@ let
         | /usr/bin/grep -iE "arp|router|conflict|lease|roam" | /usr/bin/tail -20 \
         | /usr/bin/sed "s/^/$1 GWD ipconfig-log: /"
       wifi_capture_dump "$1" GWD
+    }
+
+    # The physical interface, i.e. never the sing-box TUN — the same derivation
+    # the TICK loop and the pcap ring do inline. Factored out for snapshot_dump,
+    # which runs outside the tick and has no $iface in scope.
+    current_iface() {
+      local i
+      i=$(/sbin/route -n get default 2>/dev/null | /usr/bin/awk '/interface:/ { print $2; exit }')
+      case "$i" in
+        utun* | "")
+          i=$(/usr/sbin/scutil --nwi | /usr/bin/awk \
+            '/^Network interfaces:/ { for (j = 3; j <= NF; j++) if ($j !~ /^utun/) { print $j; exit } }')
+          ;;
+      esac
+      [ -n "$i" ] || i=en0
+      echo "$i"
+    }
+
+    # On-demand full snapshot, replacing the hand-run netdiag.sh (removed with
+    # this change). Everything that script did on the ARP/DHCP layer — force
+    # ARP, the DHCP lease, the IPConfiguration log, the CoreCapture verdict — is
+    # already captured by gw_incident_dump/link_snapshot above, and captured
+    # automatically AT the incident rather than by hand minutes after it, which
+    # is the whole reason the manual script is going away. What is left here is
+    # only what nothing else records: the Wi-Fi driver's own radio view, the
+    # full ARP table (how populated the segment is), the per-network private
+    # MAC, and a plain reachability check that does not involve the gateway.
+    #
+    # Deliberately no broadcast ping — see the note in gw_incident_dump.
+    # Args: ts tag.
+    snapshot_dump() {
+      local iface arp_n
+      iface=$(current_iface)
+      echo "$1 SNAP begin ($2) iface=$iface"
+      freeze_pcap "$1" SNAP
+      /usr/bin/wdutil info 2>/dev/null \
+        | /usr/bin/grep -viE "^[[:space:]]*(MAC Address|BSSID)[[:space:]]*:" \
+        | /usr/bin/sed "s/^/$1 SNAP wdutil: /"
+      /usr/sbin/ipconfig getpacket "$iface" 2>/dev/null | /usr/bin/sed "s/^/$1 SNAP dhcp: /"
+      # Neighbour count first (the number is the point — how many hosts share
+      # this broadcast domain), then a bounded sample of the table itself.
+      arp_n=$(/usr/sbin/arp -an 2>/dev/null | /usr/bin/awk 'END { print NR + 0 }')
+      echo "$1 SNAP arp: $arp_n entries in the neighbour table"
+      /usr/sbin/arp -an 2>/dev/null | /usr/bin/head -40 | /usr/bin/sed "s/^/$1 SNAP arp: /"
+      # Reachability that does NOT go through the gateway ping: a TCP connect
+      # bound to the physical interface, so the TUN cannot fake the answer.
+      echo "$1 SNAP direct[1.1.1.1]=$(probe_tcp 1.1.1.1 443 "$iface")"
+      # Private (per-network randomised) MAC: macOS rotates it per SSID, which
+      # is why a MAC seen in an older capture may not be this host's any more —
+      # exactly the ambiguity that made an earlier capture hard to attribute.
+      /usr/libexec/PlistBuddy -c "Print" \
+        /Library/Preferences/com.apple.wifi.known-networks.plist 2>/dev/null \
+        | /usr/bin/grep -iE "SSID|PrivateMACAddress|AddressType" | /usr/bin/head -20 \
+        | /usr/bin/sed "s/^/$1 SNAP privmac: /"
+      echo "$1 SNAP end"
     }
 
     # The Wi-Fi driver's OWN verdict on why the link died — the L1/L2 trigger the
@@ -382,6 +472,14 @@ let
 
     echo "$(/bin/date '+%F %T') START net-observer"
     /bin/mkdir -p /var/lib/net-observer
+    # Request drop-box for the menu-bar widget (see users/gurinderu/swiftbar.nix).
+    # The plugin runs as the login user and must not need sudo just to ask for a
+    # capture freeze, so this one directory is sticky-world-writable while
+    # /var/lib/net-observer itself stays root-owned 755. Only file NAMES are
+    # honoured, never contents, and every request maps to a read-only action —
+    # the worst a stray file achieves is an extra frozen capture.
+    /bin/mkdir -p /var/lib/net-observer/requests
+    /bin/chmod 1777 /var/lib/net-observer/requests
     # Each tick's DNS probes use a fresh mktemp dir removed at end of tick; a
     # SIGKILL mid-tick (launchd stop between mktemp and rm) would orphan one.
     # Sweep any left by a killed predecessor so they can't accumulate.
@@ -398,6 +496,18 @@ let
     prev_gw=""
     while :; do
       ts=$(/bin/date '+%F %T')
+
+      # --- widget requests -------------------------------------------------
+      # One-shot asks dropped by the menu-bar plugin; acted on within a tick and
+      # consumed. `quiet` is NOT here: it is a persistent flag, read below.
+      if [ -f /var/lib/net-observer/requests/freeze ]; then
+        /bin/rm -f /var/lib/net-observer/requests/freeze
+        freeze_pcap "$ts" REQ &
+      fi
+      if [ -f /var/lib/net-observer/requests/snapshot ]; then
+        /bin/rm -f /var/lib/net-observer/requests/snapshot
+        snapshot_dump "$ts" REQ &
+      fi
 
       snap=$(route_snapshot)
       if [ "$snap" != "$prev_snap" ]; then
@@ -438,8 +548,34 @@ let
         # TUN default routes carry no gateway; ask the physical interface.
         gw=$(/sbin/route -n get -ifscope "$iface" default 2>/dev/null | /usr/bin/awk '/gateway:/ { print $2; exit }')
       fi
-      if [ -n "$gw" ]; then
-        if /sbin/ping -c 1 -t 2 "$gw" >/dev/null 2>&1; then gwst=OK; else gwst=FAIL; fi
+      # Gateway probe, with the round-trip time kept rather than a bare OK: the
+      # coworking failure does not start as a loss, it starts as a RAMP — the
+      # reply time climbs in a straight line for ~40s and only then stops. A
+      # boolean column hides that entirely and the drop looks instantaneous, so
+      # the number is what makes the menu-bar widget an early warning instead of
+      # an obituary.
+      #
+      # `touch /var/lib/net-observer/requests/quiet` suppresses this probe (and
+      # the force-ARP in the incident dump). One ICMP per 15s is negligible
+      # traffic, but it is not negligible EVIDENCE: it makes this host a visible
+      # source of gateway ARP/ICMP in its own captures, which is precisely the
+      # objection a network admin raises when shown them ("your machine is the
+      # one hammering the gateway"). In the 2026-08-26 capture window 16 of 28
+      # `who-has 10.20.0.1` frames were ours — enough to sink the argument.
+      #
+      # What quiet does NOT do is make this host silent. The direct/vless TCP
+      # probes, the DNS probes and the site curl all route THROUGH the gateway,
+      # so they still refresh its ARP entry and still appear in a capture. Quiet
+      # removes the traffic addressed AT the gateway (ICMP echo, forced who-has)
+      # — the part that reads as "hammering" — not the host's ordinary traffic.
+      # A capture free of this host entirely needs the daemon stopped, and then
+      # there is no record at all; quiet is the usable middle.
+      if [ -f /var/lib/net-observer/requests/quiet ]; then
+        gwst=QUIET
+      elif [ -n "$gw" ]; then
+        rtt=$(/sbin/ping -c 1 -t 2 "$gw" 2>/dev/null \
+          | /usr/bin/sed -n 's/.*time=\([0-9.]*\) ms.*/\1/p' | /usr/bin/head -1)
+        if [ -n "$rtt" ]; then gwst="OK(''${rtt}ms)"; else gwst=FAIL; fi
       else
         gwst=NOGW
       fi
@@ -513,7 +649,14 @@ let
         echo "$ts NET $link_snap"
         prev_link_snap="$link_snap"
       fi
-      case "$gwst" in OK) last_good_snap="$link_snap" ;; esac
+      # Under quiet there is no OK verdict to key on, and freezing last_good_snap
+      # at the last pre-quiet tick would hand a dump from hours ago as "before".
+      # The direct probe stands in: it traverses the same gateway, so a healthy
+      # one means the link was good at THIS tick.
+      case "$gwst" in
+        OK*) last_good_snap="$link_snap" ;;
+        QUIET) case "$direct" in OK*) last_good_snap="$link_snap" ;; esac ;;
+      esac
 
       # --- gw incident: one-shot deep ARP dump when the gateway ping dies -----
       # Fires on the first FAIL/NOGW tick, once per incident, re-armed when the
@@ -525,6 +668,26 @@ let
             gw_incident=1
             gw_incident_dump "$ts" "$iface" "$gw" "$last_good_snap" &
           fi
+          ;;
+        QUIET)
+          # Quiet must not cost the daemon its reason to exist. With the gw ping
+          # withheld gwst never reaches FAIL, so the branch above goes dark and
+          # nothing freezes the ring at a drop — exactly the incident the quiet
+          # capture is being gathered FOR would be the one not captured. The
+          # direct probe is the stand-in trigger: TCP :443 to 1.1.1.1 bound to
+          # the physical interface routes through this same gateway, so its
+          # failure is the gateway path dying, observed without adding one
+          # packet addressed at the gateway. The dump it fires is itself quiet
+          # (the force-arp inside is skipped, see gw_incident_dump).
+          case "$direct" in
+            OK*) gw_incident=0 ;;
+            *)
+              if [ "$gw_incident" = 0 ]; then
+                gw_incident=1
+                gw_incident_dump "$ts" "$iface" "$gw" "$last_good_snap" &
+              fi
+              ;;
+          esac
           ;;
         *)
           gw_incident=0
