@@ -12,6 +12,7 @@ in
     ./codebase-memory-ui.nix
     ./rtk.nix
     ./rust.nix
+    ./ssh.nix
   ];
 
   programs.home-manager.enable = true;
