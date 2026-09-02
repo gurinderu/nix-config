@@ -193,6 +193,18 @@ let
       # break the pool-safety check in reapTestcontainers. Relax it so the hook can see
       # them. Acceptable on a single-tenant CI box.
       ProtectProc = lib.mkForce "default";
+
+      # The module sets UMask=0066, which leaves the runner's own diagnostic logs
+      # under /var/log/github-runner/<name>/Runner_*.log at mode 0600 — in
+      # practice root-only. Those logs carry the server's actual response; the
+      # journal gets only the runner's summary line, and that line misreports: a
+      # failed broker session prints as "the runner registration has been deleted
+      # from the server", which sent one investigation after an expired token, a
+      # registration race and a stale runner version before the logs settled it.
+      # 0026 makes new files 0640, readable by the runner's own group. The state
+      # directory keeps StateDirectoryMode=0700, so .credentials and the token
+      # stay out of the group's reach regardless.
+      UMask = lib.mkForce "0026";
     };
   };
 
@@ -273,14 +285,23 @@ in
   # github-runners module runs the service as them but does NOT create them).
   # isSystemUser keeps them in the system uid range, out of login space.
   users.groups = forEachRunner (r: lib.nameValuePair (runnerUser r) { });
-  users.users = forEachRunner (
-    r:
-    lib.nameValuePair (runnerUser r) {
-      isSystemUser = true;
-      group = runnerUser r;
-      description = "GitHub Actions runner ${runnerName r}";
-    }
-  );
+  users.users = lib.mkMerge [
+    (forEachRunner (
+      r:
+      lib.nameValuePair (runnerUser r) {
+        isSystemUser = true;
+        group = runnerUser r;
+        description = "GitHub Actions runner ${runnerName r}";
+      }
+    ))
+    # Let the operator read those diagnostic logs without root (see the UMask
+    # note above). Membership grants exactly that and nothing else: the log
+    # directory is already 0755 and its files become 0640 group-owned, while the
+    # state directory stays 0700, so the OAuth credentials and the registration
+    # token remain unreachable. Read-only in effect — it changes nothing about
+    # what the runners do or what they can reach.
+    { "0xff".extraGroups = map runnerUser runners; }
+  ];
 
   systemd.services = lib.mkMerge [
     (forEachRunner (
