@@ -50,19 +50,12 @@
     # and libduckdb-sys builds its own DuckDB engine, so pointing it at this
     # host's nixpkgs would only risk a mismatch it cannot use.
     #
-    # TEMPORARY LOCAL INPUT. The flake output and the darwin module are not yet
-    # pushed to github:gurinderu/net-observer (its main is still at the commit
-    # before the packaging work), so a github: URL here would not evaluate. This
-    # MUST become `url = "github:gurinderu/net-observer";` as soon as that work
-    # lands upstream — until then this flake depends on a working copy on this
-    # machine and is not reproducible anywhere else.
-    #
-    # `git+file:` and not `path:`: a `path:` input copies the directory verbatim,
-    # gitignore and all, and that checkout carries a ~8G cargo `target/`. Locking
-    # it took three and a half minutes and would have put the whole thing in the
-    # store. git+file: sees only tracked files, so it locks a rev in seconds and
-    # is also the honest analogue of the github: URL that replaces it.
-    net-observer.url = "git+file:///Users/gurinderu/projects/observer";
+    # Was a temporary `git+file:` input while the packaging work sat unpushed;
+    # that made this flake depend on a working copy on this machine and
+    # reproducible nowhere else. Now upstream, so it is a plain github: URL and
+    # the config evaluates on any host again. Advance it with
+    # `nix flake update net-observer`.
+    net-observer.url = "github:gurinderu/net-observer";
     # verstak: structured-inquiry skill set (github:verstak-ai/skills). Like
     # craft, not a Nix flake (flake = false) — we consume the repo tree as a
     # store path and symlink its skills/ dirs into ~/.config/opencode/skills
