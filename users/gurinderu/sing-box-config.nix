@@ -68,6 +68,11 @@ let
   # Per-server transport map (structural, non-secret). See sing-box-secrets.nix.
   transports = (import ./sing-box-secrets.nix).transports;
 
+  # The fakeip pool. Shared with the darwin start script's stale-cache guard,
+  # hence a file of its own — see ./fakeip-range.nix for why it is not the full
+  # 198.18.0.0/15.
+  fakeipRange = import ./fakeip-range.nix;
+
   # Captive-portal LOGIN domains — the public host a hotspot's login page lives
   # on (NOT the OS probe host captive.apple.com, handled separately below). These
   # are the exact same curse as captive.apple.com: before you authenticate the
@@ -214,7 +219,9 @@ in
       {
         tag = "fakeip";
         type = "fakeip";
-        inet4_range = "198.18.0.0/15";
+        # Deliberately NOT the full 198.18.0.0/15 — awdl0 owns part of it.
+        # See ./fakeip-range.nix.
+        inet4_range = fakeipRange;
         # NO inet6_range, deliberately. The TUN is v4-only (address = [
         # "172.19.0.1/30" ] below), so auto_route installs v4 routes ONLY —
         # nothing ever routes fc00::/18 and the interface has no v6 address at
@@ -569,9 +576,13 @@ in
         outbound = "direct-out";
       }
       {
-        # Fakeip range -> everything else through the VPN.
+        # Fakeip range -> everything else through the VPN. Kept in lockstep with
+        # inet4_range above: leaving the wider /15 here would claim 198.18.x for
+        # the tunnel even though awdl0 owns part of it — the route never wins
+        # against a connected interface, so the rule would only be a lie in the
+        # config about where that traffic goes.
         ip_cidr = [
-          "198.18.0.0/15"
+          fakeipRange
           "fc00::/18"
         ];
         outbound = "vless-main";
