@@ -37,6 +37,32 @@
 # recovery path — KeepAlive + the net-observer watchdog kickstart. This
 # daemon only reacts to the TUN address vanishing entirely.
 #
+# Second, independent probe: physical-interface default route (added after
+# the 2026-09-03 13:28-13:59 incident, see /var/log/net-observer.log.1). Wi-Fi
+# lost its IPv4 address and default route (RTM_DELADDR, then 30 minutes of
+# "default index: 0" / "arp: (no default gateway)") while the link stayed
+# active and macOS never re-requested DHCP on its own; only switching
+# networks recovered it. Throughout, the sing-box TUN address never moved —
+# TUN liveness says nothing about whether the physical interface can reach
+# the internet, only that the sing-box process is up — so the TUN probe saw
+# nothing wrong and dns-fallback stayed silent while sing-box logged "no
+# route to internet" for half an hour. No other daemon on the box watches for
+# this state either. This probe is DNS-independent and drives its own
+# escalation on its own tick counter (ROUTE_MISS, never mixed with the TUN
+# probe's MISS): it never touches networking.dns — that axis stays fully
+# owned by the TUN probe above — and it never kickstarts sing-box, because
+# restarting a daemon that has no route to route through is pointless; that
+# is netreload's job, not this one's.
+#
+# Reading "default route on a physical interface": sing-box's auto_route
+# installs its own default-shaped entries via the TUN (0/1, 128.0/1, and
+# sometimes a literal "default" through utun on this box — a live
+# `netstat -rn -f inet` taken while investigating this incident showed
+# exactly one non-utun "default" row via en0 alongside the utun7 halves). So
+# the probe cannot just grep for the word "default"; it must specifically
+# require the outgoing interface NOT be a utun (see net-observer.nix's own
+# CHG-line default-route logic for the same interface convention).
+#
 # Coupling with sing-box-netreload: flipping DNS makes configd rewrite
 # resolv.conf, which is sing-box-netreload's WatchPaths trigger. Left alone
 # that would kickstart (kill+relaunch) the very sing-box we just recovered on
@@ -131,7 +157,31 @@ let
       done
     }
 
+    # Physical-interface default route: the first line of `netstat -rn -f
+    # inet` whose destination is literally "default" and whose interface
+    # column does not start with "utun" (sing-box's auto_route entries, incl.
+    # its own utun "default" halves/whole, must not count as a live route).
+    # awk exits 0 with empty output when nothing matches, which is exactly
+    # "no physical default route" - no separate not-found branch needed.
+    # Piped from netstat rather than `route -n get default` because that only
+    # ever reports the single highest-priority default (may be the utun one),
+    # while we need to know whether a non-utun default exists at all.
+    phys_default() {
+      /usr/sbin/netstat -rn -f inet 2>/dev/null \
+        | /usr/bin/awk '$1 == "default" && $4 !~ /^utun/ { print $2, $4; exit }'
+    }
+
+    # Wi-Fi hardware port's device name (e.g. en0), resolved fresh each call
+    # rather than hardcoded: the port-to-device mapping is not guaranteed
+    # stable across hardware/macOS changes, and this daemon runs forever.
+    wifi_device() {
+      /usr/sbin/networksetup -listallhardwareports 2>/dev/null \
+        | /usr/bin/awk '/^Hardware Port: Wi-Fi$/ { getline; print $2 }'
+    }
+
     MISS=0
+    ROUTE_MISS=0
+    ROUTE_COOLDOWN=0
     while true; do
       if [ -e "$DISABLE" ]; then
         /bin/sleep 30
@@ -158,6 +208,50 @@ let
           log "TUN absent for $MISS checks, DNS was '$CUR' - fallback $WANT_FALLBACK engaged"
         fi
       fi
+
+      # Second, DNS-independent axis: physical default route. `|| true` on
+      # every probe here so a transient netstat/networksetup hiccup under
+      # `set -e`-like discipline never kills the whole reconcile loop (this
+      # daemon has no set -e, but the probes are written to survive one
+      # regardless, since a failing pipeline element under other shells'
+      # differing pipefail defaults must not abort the tick).
+      PD=$(phys_default || true)
+      if [ -n "$PD" ]; then
+        if [ "$ROUTE_MISS" -ge 4 ]; then
+          PGW=$(printf '%s\n' "$PD" | /usr/bin/awk '{print $1}')
+          PIF=$(printf '%s\n' "$PD" | /usr/bin/awk '{print $2}')
+          log "default route back via $PGW dev $PIF after $ROUTE_MISS checks"
+        fi
+        ROUTE_MISS=0
+        [ "$ROUTE_COOLDOWN" -gt 0 ] && ROUTE_COOLDOWN=$((ROUTE_COOLDOWN - 1))
+      else
+        ROUTE_MISS=$((ROUTE_MISS + 1))
+        [ "$ROUTE_COOLDOWN" -gt 0 ] && ROUTE_COOLDOWN=$((ROUTE_COOLDOWN - 1))
+        WDEV=$(wifi_device || true)
+        LINK=inactive
+        if [ -n "$WDEV" ] && /sbin/ifconfig "$WDEV" 2>/dev/null | /usr/bin/grep -q 'status: active'; then
+          LINK=active
+        fi
+        if [ "$ROUTE_MISS" -eq 4 ]; then
+          log "default route absent for $ROUTE_MISS checks, link=$LINK dev=''${WDEV:-unknown}"
+        fi
+        if [ "$ROUTE_MISS" -ge 8 ] && [ "$LINK" = active ] && [ "$ROUTE_COOLDOWN" -eq 0 ]; then
+          if [ -n "$WDEV" ]; then
+            log "default route absent for $ROUTE_MISS checks, link active - cycling Wi-Fi ($WDEV)"
+            /usr/sbin/networksetup -setairportpower "$WDEV" off || true
+            /bin/sleep 2
+            /usr/sbin/networksetup -setairportpower "$WDEV" on || true
+            ROUTE_COOLDOWN=20
+          else
+            log "default route absent for $ROUTE_MISS checks, link active - no Wi-Fi device found, cannot cycle"
+          fi
+        elif [ "$ROUTE_MISS" -ge 8 ] && [ "$LINK" != active ]; then
+          if [ $((ROUTE_MISS % 8)) -eq 0 ]; then
+            log "default route absent for $ROUTE_MISS checks, link=$LINK - not our zone, no action"
+          fi
+        fi
+      fi
+
       /bin/sleep 30
     done
   '';
