@@ -111,10 +111,20 @@ nix-darwin.lib.darwinSystem {
     {
       # Launch Ice (menu bar manager) at login, declaratively, instead of
       # relying on its in-app "Launch at login" toggle.
+      # KeepAlive = { SuccessfulExit = false; }, not plain `true`: launchd
+      # should only relaunch Ice after it dies badly (nonzero exit or a
+      # signal), not after the user quits it deliberately (a clean Quit exits
+      # 0, which SuccessfulExit=false does not restart) — with `true` Ice
+      # could never be closed by hand, it would just bounce back. Observed
+      # 2026-09-03: Ice crashed ("last terminating signal = Trace/BPT trap: 5",
+      # runs = 1, job state = exited) and with the previous KeepAlive = false
+      # it just stayed dead — no menu-bar manager until a manual relaunch.
       launchd.user.agents.ice.serviceConfig = {
         ProgramArguments = [ "/Applications/Ice.app/Contents/MacOS/Ice" ];
         RunAtLoad = true;
-        KeepAlive = false;
+        KeepAlive = {
+          SuccessfulExit = false;
+        };
         ProcessType = "Interactive";
       };
     }

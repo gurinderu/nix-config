@@ -113,6 +113,16 @@ let
       printf '%s' "${fakeipRange}" > "$stamp"
     fi
 
+    # Stamp the moment THIS process instance starts, so postActivation (below)
+    # can tell whether the config on disk is newer than the config this
+    # running process actually loaded — without parsing `ps` output for a
+    # start time (macOS `ps -o lstart=` has no portable seconds-since-epoch
+    # form short of round-tripping through `date -j -f`, for no benefit over a
+    # file this script already controls). Written right before exec, so it
+    # reflects "the config this process is about to read", not "when launchd
+    # spawned the wrapper".
+    /usr/bin/touch ${stateDir}/started
+
     exec ${pkgs.sing-box}/bin/sing-box run -c ${configPath}
   '';
 
@@ -317,4 +327,49 @@ in
     RunAtLoad = true;
     StartInterval = 900;
   };
+
+  # Catch the switch that leaves sing-box running on a STALE config.
+  #
+  # Ordering, confirmed against the generated /run/current-system/activate:
+  # system launchd daemons (this file's org.nixos.sing-box) are (re)loaded
+  # around line ~2500, well before "Activating home-manager configuration"
+  # at ~2684 — home-manager is what renders ~/.config/sing-box/config.json
+  # (users/gurinderu/sing-box.nix). So on every switch sing-box is booted out
+  # and relaunched against whatever config.json already happened to be on
+  # disk, and the NEW config lands only after that, once home-manager runs.
+  # sing-box-reload above is meant to catch the resulting mismatch (it
+  # WatchPaths the config dir and kickstarts on the write home-manager just
+  # did), but it depends on that job actually being loaded into launchd —
+  # observed missing at least once (2026-09-03, likely macOS Background Task
+  # Management silently dropping it), with no other mechanism to notice. A
+  # WatchPaths job is therefore not sufficient on its own as the only path to
+  # a fresh config; this is a second, ordering-based check that doesn't
+  # depend on any launchd job having stayed loaded.
+  #
+  # Check: config.json's mtime vs the ${stateDir}/started stamp the start
+  # script (above) touches immediately before it execs sing-box. If the
+  # config was written after the running process last started, that process
+  # is serving a config older than what's on disk now — kickstart it. This
+  # is preferred over inspecting the process's own start time (`ps` has no
+  # portable seconds-since-epoch form on macOS without round-tripping through
+  # `date -j -f`) because it reuses a marker this module already writes.
+  #
+  # If sing-box isn't running at all, do nothing — RunAtLoad/KeepAlive will
+  # bring it up already reading the config home-manager just wrote, and a
+  # `launchctl kickstart` of a stopped job here would just race that. Runs in
+  # postActivation, i.e. strictly after the "Activating home-manager" block
+  # above has finished, per the ordering this comment opens with. Never fails
+  # activation: this is a best-effort freshness nudge, not a required step.
+  system.activationScripts.postActivation.text = lib.mkAfter ''
+    echo "checking sing-box config freshness..." >&2
+    if [ -e ${stateDir}/started ] && [ -e ${configPath} ]; then
+      configMtime=$(/usr/bin/stat -f %m ${configPath} 2>/dev/null || echo 0)
+      startedMtime=$(/usr/bin/stat -f %m ${stateDir}/started 2>/dev/null || echo 0)
+      if [ "$configMtime" -gt "$startedMtime" ]; then
+        echo "sing-box: config.json is newer than the running process; kickstarting" >&2
+        /bin/launchctl kickstart -k system/org.nixos.sing-box \
+          || echo "warning: could not kickstart sing-box (not loaded yet?)" >&2
+      fi
+    fi
+  '';
 }
