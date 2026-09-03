@@ -221,8 +221,8 @@ let
 
     # One A query against one server; verdict per the vocabulary in the header.
     # The fakeip check matters most: geosite-category-ru must route .ru names
-    # to a REAL resolver, so a 198.18.0.0/15 answer proves the query missed
-    # the rule (fakeip answers any name — it cannot say NXDOMAIN).
+    # to a REAL resolver, so an answer inside the fakeip pool proves the query
+    # missed the rule (fakeip answers any name — it cannot say NXDOMAIN).
     probe_dns() { # server domain -> OK(ip/NNms)/FAKEIP(ip)/EMPTY/<RCODE>/TIMEOUT/SKIP
       local out rcode ip ms
       [ -n "$1" ] || { echo SKIP; return; }
@@ -234,7 +234,9 @@ let
       ms=$(printf '%s\n' "$out" | /usr/bin/awk '/Query time:/ { print $4; exit }')
       case "$ip" in
         "") echo EMPTY ;;
-        198.18.* | 198.19.*) echo "FAKEIP($ip)" ;;
+        # Kept in lockstep with users/gurinderu/fakeip-range.nix (172.24.0.0/14 =
+        # 172.24.*-172.27.*): update this glob if that range ever moves.
+        172.2[4-7].*) echo "FAKEIP($ip)" ;;
         *) echo "OK($ip/''${ms}ms)" ;;
       esac
     }
@@ -732,7 +734,8 @@ let
             echo "$ts DNS cache: (empty)"
           fi
           case "$cache" in
-            *198.18.* | *198.19.* | *fc00:*)
+            # Kept in lockstep with users/gurinderu/fakeip-range.nix (172.24.0.0/14).
+            *172.2[4-7].* | *fc00:*)
               echo "$ts DNS ALERT poisoned mDNSResponder cache: fakeip for a .ru name"
               ;;
           esac
