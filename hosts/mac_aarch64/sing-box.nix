@@ -254,6 +254,29 @@ in
   # is now a small script that skips the kickstart when dns-fallback's flip flag
   # was touched in the last 20s. Everything it uses is on the always-mounted
   # system volume, so the /nix dependency stays absent.
+  #
+  # Second suppression, added after log analysis (2026-09-03): a single network
+  # transition rewrites resolv.conf TWICE (the DHCP lease, then the route
+  # settling a few seconds later). WatchPaths sees both writes; ThrottleInterval
+  # only delays the second one instead of dropping it, so it still fires — now
+  # AFTER the interval, against a sing-box that the first kickstart already
+  # fixed. Sample from sing-box.log.1: 12 of 17 kickstarts that day came in
+  # pairs 10-12s apart (e.g. 16:55:33 -> 16:55:43), each pair killing a process
+  # that had just finished recovering. Each redundant kickstart is another
+  # 5-10s of fail-closed downtime (route.final routes everything through
+  # sing-box), so this is not free to ignore.
+  #
+  # Fix: before kickstarting, check whether sing-box already recovered from
+  # whatever caused this WatchPaths fire. "Recovered" = sing-box's own log,
+  # read from its most recent "sing-box started" line onward, has no
+  # "missing default interface" line after it — i.e. the current run bound an
+  # interface and has not lost it since. This is preferred over a pid-uptime
+  # check (ps has no portable "seconds since start" on macOS; `ps -o lstart=`
+  # would need date parsing for no real benefit) because it reads the exact
+  # symptom auto_detect_interface fails to self-heal from, described above,
+  # rather than inferring it from timing. If the log can't be read or no start
+  # line is found yet, fall through to kickstart as before — that's the safe
+  # default this replaces.
   launchd.daemons.sing-box-netreload.serviceConfig = {
     ProgramArguments = [
       "/bin/sh"
@@ -264,12 +287,20 @@ in
           age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f %m "$f") ))
           [ "$age" -ge 0 ] && [ "$age" -lt 20 ] && exit 0
         fi
+        start_line=$(/usr/bin/grep -n 'sing-box started' ${logPath} 2>/dev/null | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
+        if [ -n "$start_line" ] \
+          && ! /usr/bin/tail -n +"$start_line" ${logPath} 2>/dev/null \
+               | /usr/bin/grep -q 'missing default interface'; then
+          since=$(/usr/bin/sed -n "''${start_line}p" ${logPath} | /usr/bin/awk '{print $2, $3}')
+          /bin/echo "$(/bin/date '+%z %Y-%m-%d %H:%M:%S') INFO netreload: skip kickstart, sing-box healthy since $since" >> ${logPath}
+          exit 0
+        fi
         exec /bin/launchctl kickstart -k system/org.nixos.sing-box
       ''
     ];
     WatchPaths = [ "/etc/resolv.conf" ];
     RunAtLoad = false;
-    ThrottleInterval = 10;
+    ThrottleInterval = 20;
   };
 
   # Size-cap the sing-box log: rotate every 15 min, compress, keep 5, delete the
