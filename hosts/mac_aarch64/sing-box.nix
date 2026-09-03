@@ -67,7 +67,13 @@ let
         | /usr/bin/sed -n 's/.*Device: \([^)]*\)).*/\1/p')
       [ -n "$dev" ] || continue
       /sbin/ifconfig "$dev" | /usr/bin/grep -q "inet ${dnsPinRe} " && continue
-      /sbin/ifconfig "$dev" alias ${dnsPin} 255.255.255.255 2>/dev/null || true
+      # The `netmask` keyword is mandatory here: macOS ifconfig's positional
+      # alias form (`alias <addr> <mask>`) does NOT treat the trailing token
+      # as a netmask — it silently falls back to a class-based mask instead
+      # (confirmed live: 255.255.255.255 came back as
+      # `inet ${dnsPin} netmask 0xffffff00`, a /24, with a bogus connected
+      # route added for it). The keyword form always applies the mask given.
+      /sbin/ifconfig "$dev" alias ${dnsPin} netmask 255.255.255.255 2>/dev/null || true
     done
     # On a config reload / darwin-rebuild, launchd boots out the old instance
     # (SIGTERM) and bootstraps this new one. The old sing-box keeps the bbolt
