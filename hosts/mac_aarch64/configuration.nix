@@ -5,6 +5,7 @@
     ./net-observer.nix
     ./dns-fallback.nix
     ./netbird.nix
+    ./btm-check.nix
   ];
 
   # Pin system DNS to the address sing-box's own DNS listener answers on — an
