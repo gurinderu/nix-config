@@ -104,13 +104,49 @@ let
     # on an actual change: a wipe costs every existing mapping, so it must not
     # happen on ordinary restarts. Missing stamp with an existing cache = a cache
     # from before this guard existed, whose range is unknown — wipe it once.
+    #
+    # The stamp MUST reflect what config.json actually holds, not ${fakeipRange}
+    # (the value baked into this script at build time) — those two can disagree.
+    # Root-caused 2026-09-03: a switch at 18:49 rebuilt this script with the new
+    # pool 172.24.0.0/14, the guard (then keyed on ${fakeipRange}) wiped cache.db
+    # and stamped 172.24.0.0/14 — but home-manager writes ~/.config/sing-box/
+    # config.json in a SEPARATE activation step that landed ~24s later (nix-darwin
+    # activation ordering; worked around above via the reload daemon watching
+    # configDir, but that doesn't help the process already running). So the
+    # process that actually started right then loaded the OLD config.json and
+    # served the OLD pool for 13 minutes, filling cache.db with 198.19.x mappings
+    # while the stamp already claimed the new range. At the next kickstart
+    # (19:02, config.json now current) stamp == config's range, so the guard saw
+    # no change and never wiped the mixed-pool cache.db — stale 198.19.x mappings
+    # (e.g. github.com) kept being served, breaking SSH to GitHub over the tunnel.
+    # Keying the stamp on config.json instead — the file the `exec` below actually
+    # loads — makes the stamp track reality instead of intent.
     stamp=${stateDir}/fakeip-range
-    if [ "$(/bin/cat "$stamp" 2>/dev/null)" != "${fakeipRange}" ]; then
+    want=$(/usr/bin/python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        cfg = json.load(f)
+    for dns_server in cfg.get("dns", {}).get("servers", []):
+        r = dns_server.get("inet4_range")
+        if r:
+            print(r)
+            break
+except Exception:
+    pass
+' ${configPath} 2>/dev/null)
+    if [ -z "$want" ]; then
+      echo "sing-box: could not read inet4_range from ${configPath}; falling back to build-time ${fakeipRange}" >&2
+      want=${fakeipRange}
+    elif [ "$want" != "${fakeipRange}" ]; then
+      echo "sing-box: config.json still carries $want, build expects ${fakeipRange}; home-manager has not re-rendered yet" >&2
+    fi
+    if [ "$(/bin/cat "$stamp" 2>/dev/null)" != "$want" ]; then
       if [ -e ${stateDir}/cache.db ]; then
-        echo "sing-box: fakeip pool is now ${fakeipRange}; dropping cache.db with its stale mappings" >&2
+        echo "sing-box: fakeip pool is now $want; dropping cache.db with its stale mappings" >&2
         /bin/rm -f ${stateDir}/cache.db
       fi
-      printf '%s' "${fakeipRange}" > "$stamp"
+      printf '%s' "$want" > "$stamp"
     fi
 
     # Stamp the moment THIS process instance starts, so postActivation (below)
