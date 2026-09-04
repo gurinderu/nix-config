@@ -78,7 +78,12 @@ nix-darwin.lib.darwinSystem {
         casks = [
           # Menu bar manager — hides/collapses status icons so they stop
           # disappearing behind the notch. Free Bartender alternative.
-          "jordanbaird-ice"
+          # @beta (0.11.13-dev.2), not the stable 0.11.12: stable is from
+          # Oct 2024 and crashes ~3s after launch on macOS 26 (EXC_BREAKPOINT
+          # in Ice's own code, identical signature in every report, observed
+          # 2026-09-03/04 — upstream issues #821/#867/#940). The macOS 26
+          # compatibility fixes only exist in the dev pre-releases.
+          "jordanbaird-ice@beta"
         ];
         onActivation = {
           # Taps are pinned to the nix store (read-only, root-owned) via the
