@@ -98,7 +98,38 @@
     # 8 leaves comfortable headroom. Raise only if the exit gains multiplexing
     # or cache.nixos.org ever gets routed direct-out.
     http-connections = 8;
+
+    # Build parallelism cap. nix's default ("use everything") stacked on top
+    # of cargo/IDE/VM load repeatedly drove load1 into the hundreds on this
+    # fanless 8-core M2 Air (2026-09-02..05: peaks 200-400, nightly
+    # rustc/go/nix crash reports, two Jetsam events). Every packet crosses
+    # the userspace sing-box process, so host starvation IS a network outage
+    # here: at load1 >= 64 over half the tunnel probes fail (measured
+    # 2026-07-30), and the control group is just as clear — the one night
+    # with no builds (2026-09-05 02:00-09:00) had zero failures. Two jobs at
+    # four cores each keeps nix at or under half the machine.
+    max-jobs = 2;
+    cores = 4;
   };
+
+  # GC + store dedup on a schedule. The disk filled to zero twice around
+  # 2026-09-02..04: nix itself crashed mid-build, and dns-fallback's
+  # `networksetup -setdnsservers` failed with "No space left on device" —
+  # i.e. a full disk breaks the DNS repair path too, turning a disk problem
+  # into a network outage. Each time the fix was a manual
+  # nix-collect-garbage. 14d keeps enough generations to roll back a bad
+  # switch while bounding the store; 04:00 daily because the build churn on
+  # this machine outpaces a weekly sweep (launchd runs a missed calendar
+  # fire on the next wake, so sleep at 4am is fine).
+  nix.gc = {
+    automatic = true;
+    interval = {
+      Hour = 4;
+      Minute = 0;
+    };
+    options = "--delete-older-than 14d";
+  };
+  nix.optimise.automatic = true;
 
   programs.zsh.enable = true;
 
