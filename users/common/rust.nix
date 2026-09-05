@@ -14,26 +14,40 @@
 #
 # Profiles set here apply on top of every project's Cargo.toml, so no
 # repository needs modifying; a repo's own .cargo/config.toml still wins.
-{ ... }:
+{ pkgs, lib, ... }:
 {
   home.sessionVariables = {
     RUSTC_WRAPPER = "sccache";
     SCCACHE_CACHE_SIZE = "32G";
   };
 
-  home.file.".cargo/config.toml".text = ''
-    # Managed by home-manager (users/common/rust.nix) — edit it there.
+  home.file.".cargo/config.toml".text =
+    ''
+      # Managed by home-manager (users/common/rust.nix) — edit it there.
 
-    [profile.dev]
-    # Incremental is intentionally NOT set here — see the note above.
+      [profile.dev]
+      # Incremental is intentionally NOT set here — see the note above.
 
-    # Full DWARF across the whole dependency tree dominates both link time and
-    # target/ size. Line tables still give backtraces with file:line, which is
-    # what a debug build needs day to day.
-    debug = "line-tables-only"
+      # Full DWARF across the whole dependency tree dominates both link time and
+      # target/ size. Line tables still give backtraces with file:line, which is
+      # what a debug build needs day to day.
+      debug = "line-tables-only"
 
-    [profile.dev.package."*"]
-    # Third-party crates are effectively never stepped through in a debugger.
-    debug = false
-  '';
+      [profile.dev.package."*"]
+      # Third-party crates are effectively never stepped through in a debugger.
+      debug = false
+    ''
+    + lib.optionalString pkgs.stdenv.isDarwin ''
+
+      [build]
+      # Darwin only: cap cargo's parallelism on the fanless M2 Air. Unbounded
+      # cargo (often several concurrent sessions of it) is what drove the
+      # 2026-07-30 and 2026-09-02..05 load storms — e.g. five concurrent ~1GB
+      # `ld` processes swapping the machine out. Every packet on this host
+      # crosses the userspace sing-box daemon, so a build storm IS a network
+      # outage (>50% tunnel-probe failures at load1 >= 64, zero failures the
+      # one night without builds). 4 = the P-core count; the E-cores stay
+      # free for the interactive/network side.
+      jobs = 4
+    '';
 }
