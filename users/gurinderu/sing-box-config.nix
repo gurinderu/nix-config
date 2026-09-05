@@ -463,14 +463,25 @@ in
       # block-out" notion in urltest, so fail-by-dead-dial IS the block here.
       type = "urltest";
       tag = "vless-auto";
+      # Member ORDER is load-bearing, not cosmetic: urltest with an empty
+      # probe history defaults to the FIRST member, and probe failures DELETE
+      # a member's history (upstream SagerNet/sing-box#4255, fix PR #4256
+      # still unmerged as of 2026-09-05) — so during any incident the
+      # selector degenerates to "first member, frozen". Two months of
+      # observer logs show sel pinned to the first entry through every storm,
+      # including the 8.5h outage of 2026-07-27. So the list leads with the
+      # cleanest exit and ends with the GHOSTNET 94.103.168.x nodes (history
+      # of night outages, TCP-blackholed from MegaFon cellular, and the
+      # 2026-09-05 EOF storm): vless-out-8 (194.87.208.142, tcp) first, the
+      # Poland trio next, Germany/GHOSTNET last.
       outbounds = [
-        "vless-out-1"
-        "vless-out-2"
-        "vless-out-3"
+        "vless-out-8"
         "vless-out-4"
         "vless-out-5"
         "vless-out-6"
-        "vless-out-8"
+        "vless-out-2"
+        "vless-out-3"
+        "vless-out-1"
       ];
       url = "https://www.gstatic.com/generate_204";
       interval = "1m";
