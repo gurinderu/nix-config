@@ -114,6 +114,20 @@
 
       darwinPackages = self.darwinConfigurations."mac_aarch64".pkgs;
 
+      # Mechanical eval coverage for the Mac host. `nix flake check` forces
+      # system.build.toplevel for nixosConfigurations but has NO darwin
+      # equivalent — proven empirically 2026-09-05: a flake with a
+      # guaranteed-throwing darwinConfigurations entry still gets "all checks
+      # passed!". So without this line every hosts/mac_aarch64 change ships
+      # with zero eval coverage, and the first sign of a bad option (e.g. a
+      # nix-darwin bump renaming nix.gc.* — its removed-option stubs are
+      # already in the locked rev) is a failed `darwin-rebuild switch` on the
+      # fail-closed Mac. `.system` is the derivation whose eval forces the
+      # whole module tree; from Linux run
+      # `nix flake check --all-systems` (or eval the drvPath directly) to
+      # exercise it.
+      checks.aarch64-darwin.mac-system = self.darwinConfigurations."mac_aarch64".system;
+
       nixosConfigurations."thinkpad-x1-gen12" = import ./hosts/thinkpad-x1-gen12 {
         inherit
           inputs

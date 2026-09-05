@@ -169,9 +169,15 @@ except Exception:
   # /var/log/net-observer.log and /var/log/dns-fallback.log are written by the
   # net-observer and dns-fallback daemons (./net-observer.nix, ./dns-fallback.nix);
   # they share this rotation so no second logrotate daemon is needed. Keep the
-  # paths in sync with those modules.
+  # paths in sync with those modules. Same deal for the Rust observer's
+  # net-observerd.log (its darwin module sets the path but rotates nothing),
+  # netbird's launchd stdout/stderr sinks (netbird rotates its own client.log
+  # but launchd-owned append fds are outside its reach — and with RunAtLoad
+  # the retry loops write them continuously), and the nix-gc/nix-optimise
+  # logs added in ./configuration.nix. missingok already covers any of them
+  # not existing yet.
   logrotateConf = pkgs.writeText "sing-box-logrotate.conf" ''
-    ${logPath} /var/log/net-observer.log /var/log/dns-fallback.log {
+    ${logPath} /var/log/net-observer.log /var/log/dns-fallback.log /var/log/net-observerd.log /var/log/netbird.out.log /var/log/netbird.err.log /var/log/nix-gc.log /var/log/nix-optimise.log {
         su root wheel
         size 20M
         rotate 5
