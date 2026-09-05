@@ -9,13 +9,21 @@
 # clients of this daemon over /var/run/netbird.sock — neither brings the tunnel
 # up on its own.
 #
-# It is deliberately NOT started automatically: RunAtLoad and KeepAlive are both
-# off, so launchd loads the job at boot but leaves it stopped. Drive it by hand:
+# Started at boot (RunAtLoad) since 2026-09-05, by request — it began as a
+# manual-only job. KeepAlive stays off so `launchctl kill TERM` still takes the
+# peer down and it STAYS down until the next boot or kickstart; the flip side
+# is that a crashed daemon is not resurrected either. Manual control:
 #
 #   sudo launchctl kickstart system/org.nixos.netbird    # bring the peer up
 #   sudo launchctl kill TERM system/org.nixos.netbird    # take it down
 #   netbird status                                       # inspect
 #   netbird-ui                                           # menu-bar app
+#
+# Caveat for hostile guest networks: a mesh client hole-punching without a
+# direct path sprays STUN/ICE UDP continuously, which is exactly what got this
+# machine's IP ban-cycled by the coworking MikroTik in July (that time it was
+# tailscale in relay mode). If the ban cycle ever comes back with netbird now
+# always on, the kill command above is the first experiment.
 #
 # (nix-darwin prefixes daemon labels with `org.nixos.`, hence the label above
 # rather than a bare `netbird`.)
@@ -84,9 +92,9 @@ in
       "/bin/wait4path /nix/store && exec ${start}"
     ];
 
-    # Manual control, as requested: launchd loads the job but never starts it,
-    # and does not resurrect it when it exits or is killed.
-    RunAtLoad = false;
+    # Auto-start at boot; no KeepAlive so a manual TERM sticks (see the header
+    # comment for the trade-off and the hostile-network caveat).
+    RunAtLoad = true;
     KeepAlive = false;
 
     StandardOutPath = "/var/log/netbird.out.log";
