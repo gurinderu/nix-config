@@ -60,10 +60,18 @@
 #                dead tunnel is a 4s probe losing to the run queue, not a
 #                wedge, and restarting only tears down live flows (see the
 #                gate below for the 2026-07-27 nine-hour restart loop).
-#                Backoff: at most one kickstart per 5 min (a captive portal
-#                can mimic the wedge signature — the kick is harmless there,
-#                the portal flow bypasses the proxy, but don't storm).
-#                Kill switch without a rebuild:
+#                Backoff: starts at one kickstart per 5 min and doubles for
+#                every kick that is not followed by a healthy tun probe
+#                (5/10/20/40/60 min, reset on the first 204) — a kick that
+#                didn't cure the outage means it isn't a process wedge, and
+#                restart-storming a fleet block or a hostile network only
+#                churns utuns (see the escalation comment at the gate below).
+#                A second repair path covers the job being GONE from launchd
+#                entirely (manual bootout never re-bootstrapped, or BTM
+#                disallow): sb= empty for 3+ ticks with the service missing
+#                → bootstrap it back, and if THAT fails, log + notify the
+#                console user (BTM needs a human in System Settings).
+#                Kill switch without a rebuild (covers both paths):
 #                  touch /var/lib/net-observer/watchdog-off
 #
 # Request drop-box — /var/lib/net-observer/requests/, sticky-world-writable so
@@ -492,6 +500,10 @@ let
     wedge_ticks=0
     last_kick=0
     last_skip=0
+    kick_streak=0
+    sb_gone_ticks=0
+    last_bootstrap=0
+    last_btm_notify=0
     dns_incident=0
     prev_link_snap=""
     last_good_snap="(none yet)"
@@ -769,12 +781,36 @@ let
       # low-load failures, and above the threshold a restart is the wrong tool.
       # Gate on load1 and the watchdog goes back to covering only the case it
       # was built for (a stale interface monitor on an otherwise idle host).
+      # A kick that WORKED is followed by a healthy tun probe within the 5-min
+      # backoff; a kick that didn't means the outage is not a process wedge
+      # (fleet-side block, hostile network) and another restart won't help
+      # either. kick_streak counts kicks not yet vindicated by a 204, and the
+      # backoff below doubles with it: 5, 10, 20, 40, then 60 min. Replayed
+      # against 2026-07-27 (fleet block, load normal, sel frozen): 100 kicks
+      # under the flat 5-min backoff become ~11. Beyond the user-visible
+      # blips, every restart also tears down and recreates a utun — and the
+      # 2026-09-03 kernel panic (m_copym_with_hdrs, uipc_mbuf.c) hit the
+      # kernel's mbuf path with utun15 already in the interface list, so
+      # utun churn is exposure, not just noise. The streak resets on any tick
+      # whose tun probe succeeds — including the false 204 that a MISSING
+      # sing-box job produces (no TUN routes, curl goes out the physical NIC);
+      # that state is repaired by the bootstrap block below, and a stale
+      # streak there would only delay the first kick after repair.
+      if [ "$tun" = "204" ]; then
+        kick_streak=0
+      fi
       if [ "$wedge_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
         now_s=$(/bin/date +%s)
-        if [ $((now_s - last_kick)) -ge 300 ]; then
+        shift_n=$kick_streak
+        [ "$shift_n" -gt 4 ] && shift_n=4
+        backoff=$((300 << shift_n))
+        [ "$backoff" -gt 3600 ] && backoff=3600
+        if [ $((now_s - last_kick)) -ge "$backoff" ]; then
           if /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
-            echo "$ts ACT tunnel dead $wedge_ticks ticks, direct path up -> kickstart sing-box"
-            /bin/launchctl kickstart -k system/org.nixos.sing-box
+            echo "$ts ACT tunnel dead $wedge_ticks ticks, direct path up -> kickstart sing-box (streak $kick_streak, backoff ''${backoff}s)"
+            /bin/launchctl kickstart -k system/org.nixos.sing-box \
+              || echo "$ts ACT kickstart failed -- job not loaded? the bootstrap repair below will pick it up"
+            kick_streak=$((kick_streak + 1))
             last_kick=$now_s
             wedge_ticks=0
           elif [ $((now_s - last_skip)) -ge 300 ]; then
@@ -783,6 +819,48 @@ let
             # wait out. last_skip only rate-limits this line to one per 5 min.
             echo "$ts ACT suppressed: tunnel dead $wedge_ticks ticks but load1=$load1 -> host starvation, restart would not cure it"
             last_skip=$now_s
+          fi
+        fi
+      fi
+
+      # Job-gone repair. KeepAlive only respawns a service that is still
+      # LOADED; two observed ways the service stops existing at all are a
+      # manual `launchctl bootout` never followed by a bootstrap (2026-09-05:
+      # tunnel down ~25 min until diagnosed by hand) and macOS BTM silently
+      # disallowing the job so activation's bootstrap loads nothing
+      # (2026-09-03, see ./btm-check.nix). In both states the wedge watchdog
+      # above is BLIND: with no TUN routes the tun curl goes straight out the
+      # physical NIC and returns 204, so wedge_ticks never accumulates. The
+      # reliable signal is the process being gone: sb= empty for 3+ ticks,
+      # while a normal restart's lsof-on-cache.db wait keeps sb= empty for at
+      # most ~2 ticks. Guarded by `launchctl print` so a loaded-but-
+      # crash-looping job (launchd's problem, not ours) is left alone, and by
+      # the same watchdog-off flag as the kick path.
+      case "$sb" in
+        "") sb_gone_ticks=$((sb_gone_ticks + 1)) ;;
+        *) sb_gone_ticks=0 ;;
+      esac
+      if [ "$sb_gone_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
+        now_s=$(/bin/date +%s)
+        if [ $((now_s - last_bootstrap)) -ge 300 ] \
+          && ! /bin/launchctl print system/org.nixos.sing-box >/dev/null 2>&1; then
+          last_bootstrap=$now_s
+          if out=$(/bin/launchctl bootstrap system /Library/LaunchDaemons/org.nixos.sing-box.plist 2>&1); then
+            echo "$ts ACT sing-box job was not loaded (bootout without bootstrap, or BTM) -> bootstrapped"
+          else
+            # error 5 ("Input/output error") here is BTM's refusal signature —
+            # nothing this daemon can override; a human has to flip the toggle
+            # in System Settings -> General -> Login Items & Extensions. Put it
+            # on screen (root can't post a notification directly; asuser as
+            # the console user can), rate-limited to one per 30 min.
+            echo "$ts ACT sing-box job gone and bootstrap FAILED: $out"
+            cuid=$(/usr/bin/stat -f %u /dev/console 2>/dev/null)
+            if [ -n "$cuid" ] && [ "$cuid" != "0" ] && [ $((now_s - last_btm_notify)) -ge 1800 ]; then
+              last_btm_notify=$now_s
+              /bin/launchctl asuser "$cuid" /usr/bin/osascript \
+                -e 'display notification "sing-box launchd job is gone and bootstrap failed (BTM?). VPN is down until re-enabled in System Settings." with title "net-observer"' \
+                2>/dev/null || true
+            fi
           fi
         fi
       fi
