@@ -9,13 +9,31 @@
 # clients of this daemon over /var/run/netbird.sock — neither brings the tunnel
 # up on its own.
 #
-# It is deliberately NOT started automatically: RunAtLoad and KeepAlive are both
-# off, so launchd loads the job at boot but leaves it stopped. Drive it by hand:
+# Started at boot (RunAtLoad) since 2026-09-05, by request — it began as a
+# manual-only job. KeepAlive = SuccessfulExit=false resurrects it after a
+# crash (an always-on mesh peer nobody watches must not die silently) while a
+# graceful stop still sticks: netbird's service runner exits 0 on SIGTERM, so
+# `launchctl kill TERM` takes the peer down and it STAYS down until the next
+# boot or kickstart. If that ever turns out false in practice (TERM followed
+# by an immediate respawn in netbird.out.log), drop back to KeepAlive = false
+# and rely on the boot start alone. Manual control:
 #
 #   sudo launchctl kickstart system/org.nixos.netbird    # bring the peer up
 #   sudo launchctl kill TERM system/org.nixos.netbird    # take it down
 #   netbird status                                       # inspect
 #   netbird-ui                                           # menu-bar app
+#
+# Two caveats owned deliberately with the always-on flip:
+#
+# - Hostile guest networks: a mesh client hole-punching without a direct path
+#   sprays STUN/ICE UDP continuously, which is exactly what got this machine's
+#   IP ban-cycled by the coworking MikroTik in July (then: tailscale in relay
+#   mode). If the ban cycle comes back with netbird always on, the kill
+#   command above is the first experiment.
+# - utun churn/count: net-observer.nix documents utun churn as kernel-panic
+#   exposure (2026-09-03, mbuf path); this adds one LONG-LIVED utun at boot,
+#   which is the cheap end of that trade — the panic correlate is churn from
+#   restart storms, not a stable extra interface.
 #
 # (nix-darwin prefixes daemon labels with `org.nixos.`, hence the label above
 # rather than a bare `netbird`.)
@@ -36,11 +54,15 @@ let
   # entry (unlike the sing-box/net-observer logs in ./sing-box.nix).
   logDir = "/var/log/netbird";
 
-  # Self-hosted control plane. Kept in sync with the direct-out bypass in
-  # users/gurinderu/sing-box-config-darwin.nix — without that rule this hostname
-  # resolves to a fakeip and the whole control plane is routed into the VLESS
-  # proxy, so the peer can never register. (Verified 2026-07-29: a plain lookup
-  # of this name returns 198.18.2.192.)
+  # Self-hosted control plane. Kept in sync with the control-plane rule in
+  # users/gurinderu/sing-box-config-darwin.nix. NB the routing story INVERTED
+  # since the original 2026-07-29 note claimed a direct-out bypass was needed
+  # for registration: the direct path to this host from the RU network is the
+  # one that stalls (TLS completes, nothing returns), so the rule now sends
+  # the management/signal/relay sessions THROUGH the proxy — which is also
+  # why the start script below waits for the sing-box TUN, and why
+  # NB_DISABLE_CUSTOM_ROUTING keeps netbird's own sockets on the normal
+  # route table instead of binding past the TUN.
   managementUrl = "https://netbird.infrahub.cloudless.dev:443";
 
   start = pkgs.writeShellScript "netbird-start" ''
@@ -57,6 +79,34 @@ let
     # sends them through the proxy. Peer/relay traffic is raw IP with no domain
     # to match, so it still falls through to direct.
     export NB_DISABLE_CUSTOM_ROUTING=true
+
+    # Wait (bounded) for the sing-box TUN before dialing out. The control
+    # plane's direct path from this network is documented broken (TLS
+    # completes, nothing returns, 30s dial deadline — see the bypass rule in
+    # users/gurinderu/sing-box-config-darwin.nix): the management session only
+    # works THROUGH the proxy, and launchd has no daemon ordering, so an
+    # unguarded boot start races sing-box onto the dead direct path and sits
+    # in a retry loop (plus the STUN/ICE spray the header warns about). The
+    # gate mirrors dns-fallback's TUN probe. Bounded at 60s — enough for a
+    # normal boot (sing-box's TUN is up in seconds), short enough that the
+    # documented manual kickstart is not punished when sing-box is down (on a
+    # non-RU network the direct path is fine, and if sing-box is down
+    # long-term netbird's own retries are no worse than before this guard).
+    #
+    # TERM must stay a CLEAN exit during this wait: launchd tracks this
+    # wrapper shell until the exec, a signal death is a non-zero exit, and
+    # KeepAlive.SuccessfulExit=false would resurrect the job — turning the
+    # documented `launchctl kill TERM` kill switch into a restart. After the
+    # exec the trap is gone and netbird's own graceful-shutdown handling
+    # takes over.
+    trap 'echo "netbird-start: TERM during TUN wait - exiting cleanly"; exit 0' TERM INT
+    i=0
+    while [ "$i" -lt 60 ] && ! /sbin/ifconfig | /usr/bin/grep -q 'inet 172\.19\.0\.1 '; do
+      /bin/sleep 5
+      i=$((i + 5))
+    done
+    [ "$i" -ge 60 ] && echo "netbird-start: sing-box TUN not up after ''${i}s, starting on the direct path anyway"
+    trap - TERM INT
 
     exec ${netbird}/bin/netbird service run \
       --log-level info \
@@ -84,10 +134,13 @@ in
       "/bin/wait4path /nix/store && exec ${start}"
     ];
 
-    # Manual control, as requested: launchd loads the job but never starts it,
-    # and does not resurrect it when it exits or is killed.
-    RunAtLoad = false;
-    KeepAlive = false;
+    # Auto-start at boot; resurrect only after a CRASH (non-zero exit), so a
+    # manual TERM still sticks — see the header comment for the trade-off,
+    # the verification caveat, and the hostile-network warning.
+    RunAtLoad = true;
+    KeepAlive = {
+      SuccessfulExit = false;
+    };
 
     StandardOutPath = "/var/log/netbird.out.log";
     StandardErrorPath = "/var/log/netbird.err.log";

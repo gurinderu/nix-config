@@ -11,6 +11,15 @@ nix-darwin.lib.darwinSystem {
   system = "aarch64-darwin";
   modules = [
     ./configuration.nix
+    {
+      # Stamp each generation with the flake revision. Now that generations
+      # auto-expire (nix.gc, 14d), the profile symlink dates alone no longer
+      # answer "which config was live during that incident" for anything older
+      # than the window — the stamp keeps `darwin-version --configuration-revision`
+      # (and the generation's own metadata) forensically useful. A dirty tree
+      # records dirtyRev, marking the generation as not reproducible from git.
+      system.configurationRevision = self.rev or self.dirtyRev or null;
+    }
     home-manager.darwinModules.home-manager
     {
       home-manager.useGlobalPkgs = true;
@@ -37,7 +46,12 @@ nix-darwin.lib.darwinSystem {
     # behavioural oracle the rewrite is checked against, and its watchdog
     # kickstart is still the only auto-recovery on this machine. Retiring it is a
     # separate, later step, and not before an acting handler replaces the
-    # watchdog.
+    # watchdog. NB the acting bar moved on 2026-09-05: the shell watchdog now
+    # also carries an escalating kick backoff (5→60 min, reset on healthy tun),
+    # a job-gone detector (`launchctl print` says the sing-box service is
+    # missing → bootstrap it back), and a BTM-failure notification — the Rust
+    # acting handler must cover those too before the shell daemon can retire
+    # (its current trigger engine implements only the flat 5-min backoff).
     #
     # The two must not share a log: the module's logFile therefore defaults to
     # /var/log/net-observerd.log while the shell daemon keeps
@@ -45,7 +59,14 @@ nix-darwin.lib.darwinSystem {
     # pointed at one file interleave, which would corrupt the very record the
     # migration is being judged against.
     inputs.net-observer.darwinModules.default
-    { services.net-observer.enable = true; }
+    {
+      services.net-observer.enable = true;
+      # The module sets no QoS band, and this daemon's DuckDB record is the
+      # forensic oracle the migration is judged against — under a build
+      # storm (Background QoS since 2026-09-05) it must keep observing, same
+      # reasoning as the shell observer's ProcessType in net-observer.nix.
+      launchd.daemons.net-observerd.serviceConfig.ProcessType = "Interactive";
+    }
     inputs.nix-homebrew.darwinModules.nix-homebrew
     {
       nix-homebrew = {

@@ -1,43 +1,93 @@
-# Make sure every declared user LaunchAgent is actually loaded, on every switch.
+# Make sure every declared launchd job — user agents AND system daemons — is
+# actually loaded, on every switch.
 #
-# nix-darwin treats the two launchd domains differently. System daemons in
-# /Library/LaunchDaemons are re-loaded unconditionally on each activation
-# (`launchctl unload || true; launchctl load -w`). User agents from
-# `launchd.user.agents.*` are not: the generated activate script only touches
-# ~/Library/LaunchAgents/<label>.plist when the copy on disk DIFFERS from the
-# store version (`if ! diff <store> <disk>; then cp; launchctl load -w; fi`,
-# see modules/system/launchd.nix, userLaunchdActivation). "Plist unchanged" is
-# taken as "job loaded", and those are not the same thing: the plist is a file
-# on the data volume, the job is an entry in the live gui/<uid> domain, and the
-# latter can vanish while the former stays put — a nix reinstall, a manual
-# `launchctl bootout`, a macOS update that resets login items, a gui session
-# that came up before the plist existed. From then on every rebuild sees an
-# identical plist, skips the block, and the job never comes back. That is how
-# org.nixos.ice (the Ice menu-bar manager, declared in default.nix) silently
-# stopped starting at login here, and no amount of `darwin-rebuild switch`
-# fixed it.
+# nix-darwin's activation is diff-guarded in BOTH launchd domains (see
+# modules/system/launchd.nix: one launchdActivation function serves agents and
+# daemons alike — `if ! diff <store> <disk>; then unload; cp; load -w; fi`).
+# "Plist unchanged" is taken as "job loaded", and those are not the same
+# thing: the plist is a file on disk, the job is an entry in the live launchd
+# domain, and the latter can vanish while the former stays put — a nix
+# reinstall, a manual `launchctl bootout` never followed by a bootstrap, a
+# macOS update that resets login items, macOS BTM silently disallowing the
+# job (2026-09-03: sing-box, sing-box-reload, net-observer, sing-box-logrotate
+# and activate-system all at once, see ./btm-check.nix). From then on every
+# rebuild sees an identical plist, skips the block, and the job never comes
+# back. That is how org.nixos.ice silently stopped starting at login here,
+# and how the whole VPN stack stayed down for half a day on 2026-09-03 —
+# no amount of `darwin-rebuild switch` fixed either.
 #
 # This hook closes the gap by checking the DOMAIN, not the file. For each
-# declared agent: `launchctl print gui/<uid>/<label>` (exit 0 = job is known to
-# launchd); if it is missing, `launchctl bootstrap gui/<uid> <plist>`. Already-
-# loaded jobs are left untouched, so a routine rebuild does not restart Ice —
-# the reload-on-change path stays nix-darwin's own. It runs in postActivation,
-# after userLaunchd has placed the plists, and it runs as root like the rest of
-# activate, so it enters the user's session the same way nix-darwin does:
+# declared agent — nix-darwin's `launchd.user.agents` AND home-manager's
+# `launchd.agents` (both install into ~/Library/LaunchAgents, HM naming the
+# file after the label; sops-nix from the HM set is a recorded 2026-09-03
+# BTM victim): `launchctl print gui/<uid>/<label>` (exit 0 = job is known
+# to launchd); if it is missing, `launchctl bootstrap gui/<uid> <plist>`. For
+# each declared daemon, the same against the system domain and
+# /Library/LaunchDaemons (which activation has just synced by this point).
+# Already-loaded jobs are left untouched, so a routine rebuild does not
+# restart anything — the reload-on-change path stays nix-darwin's own. Agent
+# checks enter the user's session the same way nix-darwin does:
 # `launchctl asuser <uid> sudo --user=<user> -- launchctl ...`.
 #
+# Two daemons are deliberately NOT swept: activate-system (RunAtLoad=true —
+# bootstrapping it MID-ACTIVATION re-runs activation fragments and relinks
+# /run/current-system underneath the very switch this hook runs in) and
+# nix-daemon (socket-activated by launchd; if it were truly gone this
+# activation could not be running). Both still show up in btm-check's
+# report when BTM is what took them.
+#
+# Honesty about BTM: `launchctl bootstrap` is exactly the call BTM refuses
+# (error 5), so of the ways a job goes missing this sweep REPAIRS the
+# non-BTM ones (manual bootout, lost gui session, reset login items) and
+# only surfaces the BTM ones — flipping the toggle back is Settings-only,
+# see ./btm-check.nix.
+#
+# This is the activation-time half of the job-gone repair; the runtime half
+# (between switches) lives in net-observer.nix and covers only sing-box —
+# and net-observer can itself be the missing job (it was BTM-disallowed on
+# 2026-09-03), which is exactly why this hook must cover the full set: a
+# switch is the one recovery action that does not depend on any org.nixos.*
+# job being alive.
+#
 # A failed bootstrap must not abort activation (activate runs under `set -e`):
-# over SSH with nobody logged in there is no gui/<uid> domain at all, and a job
-# the user has explicitly `launchctl disable`d is refused too. Both are
-# reported and skipped; the job will be picked up on the next switch that
-# runs inside a real session.
+# over SSH with nobody logged in there is no gui/<uid> domain at all, a job
+# the user has explicitly `launchctl disable`d is refused, and a
+# BTM-disallowed one fails with error 5 (btm-check.nix, which runs later in
+# postActivation, then names the BTM culprits loudly). All are reported and
+# skipped.
 { config, lib, ... }:
 let
   user = config.system.primaryUser;
+  # Labels are interpolated into a ROOT shell and used as plist path
+  # components, and the daemon set now includes labels contributed by
+  # third-party flake inputs (net-observer) — so refuse anything outside a
+  # conservative charset at EVAL time rather than trusting types.str.
+  checkLabel =
+    label:
+    if builtins.match "[A-Za-z0-9._-]+" label != null then
+      label
+    else
+      throw "user-agents.nix: launchd label '${label}' has characters unsafe for the root activation shell";
   # Same rule nix-darwin applies: an explicit serviceConfig.Label wins, else
   # "${launchd.labelPrefix}.<name>" (modules/launchd/default.nix). Read the
   # resolved Label rather than recomputing it so the two can never drift.
-  labels = lib.mapAttrsToList (_: agent: agent.serviceConfig.Label) config.launchd.user.agents;
+  # Home-manager agents analogously (its plist file IS "<Label>.plist").
+  labels =
+    map checkLabel (
+      lib.mapAttrsToList (_: agent: agent.serviceConfig.Label) config.launchd.user.agents
+    )
+    ++ map checkLabel (
+      lib.mapAttrsToList (_: a: a.config.Label) (
+        lib.filterAttrs (_: a: a.enable) (config.home-manager.users.${user}.launchd.agents or { })
+      )
+    );
+  unswept = [
+    "org.nixos.activate-system"
+    "org.nixos.nix-daemon"
+  ];
+  daemonLabels = lib.filter (l: !(builtins.elem l unswept)) (
+    map checkLabel (lib.mapAttrsToList (_: d: d.serviceConfig.Label) config.launchd.daemons)
+  );
   bootstrapOne = label: ''
     if ! launchctl asuser "$uid" sudo --user=${lib.escapeShellArg user} -- \
         launchctl print "gui/$uid/${label}" >/dev/null 2>&1; then
@@ -47,11 +97,22 @@ let
         || echo "warning: could not bootstrap ${label} into gui/$uid (no gui session, or job disabled)" >&2
     fi
   '';
+  bootstrapDaemon = label: ''
+    if ! launchctl print "system/${label}" >/dev/null 2>&1; then
+      echo "bootstrapping system daemon ${label} (plist present, job missing from the system domain)" >&2
+      launchctl bootstrap system "/Library/LaunchDaemons/${label}.plist" \
+        || echo "warning: could not bootstrap ${label} into the system domain (BTM disallowed? see the btm-check report below)" >&2
+    fi
+  '';
 in
 {
-  system.activationScripts.postActivation.text = lib.mkIf (labels != [ ]) (lib.mkAfter ''
-    echo "ensuring user launchd agents are loaded..." >&2
-    uid=$(id -u -- ${lib.escapeShellArg user})
-    ${lib.concatMapStrings bootstrapOne labels}
-  '');
+  system.activationScripts.postActivation.text = lib.mkIf (labels != [ ] || daemonLabels != [ ]) (
+    lib.mkAfter ''
+      echo "ensuring system launchd daemons are loaded..." >&2
+      ${lib.concatMapStrings bootstrapDaemon daemonLabels}
+      echo "ensuring user launchd agents are loaded..." >&2
+      uid=$(id -u -- ${lib.escapeShellArg user})
+      ${lib.concatMapStrings bootstrapOne labels}
+    ''
+  );
 }

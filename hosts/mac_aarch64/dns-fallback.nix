@@ -266,6 +266,11 @@ in
     RunAtLoad = true;
     KeepAlive = true;
     ThrottleInterval = 5;
+    # This daemon is the DNS repair path during exactly the load storms that
+    # starve everything else — same QoS reasoning as sing-box and
+    # net-observer: it must keep ticking while a Background-band build storm
+    # owns the run queue.
+    ProcessType = "Interactive";
     StandardOutPath = "/var/log/dns-fallback.log";
     StandardErrorPath = "/var/log/dns-fallback.log";
   };

@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, lib, config, ... }:
 {
   imports = [
     ./sing-box.nix
@@ -96,13 +96,116 @@
     #
     # 12 parallel fetches sustain ~40 MB/s aggregate through the same node, so
     # 8 leaves comfortable headroom. Raise only if the exit gains multiplexing
-    # or cache.nixos.org ever gets routed direct-out.
+    # or cache.nixos.org ever gets routed direct-out. NB the figures were
+    # measured against vless-out-1; since the 2026-09-05 urltest reorder the
+    # empty-history default exit is vless-out-8, whose burst tolerance has not
+    # been measured — treat 8 as a floor from a different node, and re-measure
+    # there if substitutions start dying mid-transfer again.
     http-connections = 8;
+
+    # Build parallelism cap. nix's default ("use everything") stacked on top
+    # of cargo/IDE/VM load repeatedly drove load1 into the hundreds on this
+    # fanless 8-core M2 Air (2026-09-02..05: peaks 200-400, nightly
+    # rustc/go/nix crash reports, two Jetsam events). Every packet crosses
+    # the userspace sing-box process, so host starvation IS a network outage
+    # here: at load1 >= 64 over half the tunnel probes fail (measured
+    # 2026-07-30), and the control group is just as clear — the one night
+    # with no builds (2026-09-05 02:00-09:00) had zero failures.
+    #
+    # The two knobs are independent: `cores` is per-derivation (NIX_BUILD_CORES;
+    # nixpkgs' cargo hook passes it as -j), `max-jobs` is how many derivations
+    # build at once — the machine-wide worst case is their PRODUCT: 2 x 2 ~= 4
+    # cooperating build threads (and ~4 concurrent linkers, under the
+    # five-1GB-linker signature that swapped the box out on 2026-07-30).
+    # "~=" because NIX_BUILD_CORES is a REQUEST to well-behaved builders
+    # (make/ninja/cargo -j), not a hard thread cap — a rogue build can still
+    # exceed it, which is why the QoS demotion below, not this arithmetic,
+    # is the load-bearing half.
+    max-jobs = 2;
+    cores = 2;
+
+    # Emergency disk guard, distinct from the scheduled GC below: when free
+    # space falls under min-free mid-build, nix pauses and collects garbage
+    # up to max-free before continuing — the guard for exactly the
+    # "afternoon of builds fills the disk between 04:00 sweeps" incident
+    # (2026-09-02..04, twice). Both default to off.
+    min-free = 10737418240; # 10 GiB
+    max-free = 53687091200; # 50 GiB
+  };
+
+  # The scheduler-priority half of the same fix: run the nix daemon and every
+  # build it spawns in the Background QoS band with low-priority IO, so when a
+  # build storm and sing-box (ProcessType=Interactive, Nice=-10) race for the
+  # cores, the packet path wins. Unlike the count caps above this also covers
+  # the case where somebody legitimately raises -j for one build.
+  #
+  # Deliberately UNCONDITIONAL, including for a repair `darwin-rebuild
+  # switch` during an outage: that switch is substitution-dominated (network
+  # -bound through the tunnel, not CPU-bound), and a slower repair beats a
+  # repair that competes with the packet path it is trying to restore.
+  nix.daemonProcessType = "Background";
+  nix.daemonIOLowPriority = true;
+
+  # GC + store dedup on a schedule. The disk filled to zero twice around
+  # 2026-09-02..04: nix itself crashed mid-build, and dns-fallback's
+  # `networksetup -setdnsservers` failed with "No space left on device" —
+  # i.e. a full disk breaks the DNS repair path too, turning a disk problem
+  # into a network outage. Each time the fix was a manual
+  # nix-collect-garbage. 14d keeps enough generations to roll back a bad
+  # switch while bounding the store; GC runs daily at 04:00 because the build
+  # churn on this machine outpaces a weekly sweep, dedup weekly on Sunday at
+  # 05:00 rather than nix-darwin's 04:15 default so the two are separated
+  # whenever the Mac is awake at both slots. That separation is best-effort
+  # only: launchd coalesces MISSED calendar fires into one run at wake, so a
+  # Mac asleep through Sunday 04:00-05:00 runs GC and dedup together at
+  # lid-open — which is also when sing-box re-establishes the TUN. The
+  # Background/low-IO demotion below (same reasoning as
+  # nix.daemonProcessType above) is what actually protects that window;
+  # the schedule offset just makes the common awake case cheaper.
+  nix.gc = {
+    automatic = true;
+    interval = {
+      Hour = 4;
+      Minute = 0;
+    };
+    options = "--delete-older-than 14d";
+  };
+  nix.optimise = {
+    automatic = true;
+    interval = {
+      Weekday = 7;
+      Hour = 5;
+      Minute = 0;
+    };
+  };
+  # nix-darwin's gc/optimise daemons ship with no log sinks and no priority
+  # class. Silent-failure is exactly the state this block exists to end (a
+  # failing nightly GC reproduces the unnoticed-full-disk incident), so give
+  # both the same log-file convention as every other daemon on this host —
+  # rotation happens via the sing-box-logrotate stanza (./sing-box.nix).
+  # Gated on the same `automatic` flags as the daemons themselves: nix-darwin
+  # defines these jobs only under mkIf automatic, and an unconditional
+  # serviceConfig here would otherwise materialize a loaded, program-less
+  # plist the day either flag is turned off.
+  launchd.daemons.nix-gc = lib.mkIf config.nix.gc.automatic {
+    serviceConfig = {
+      ProcessType = "Background";
+      LowPriorityIO = true;
+      StandardOutPath = "/var/log/nix-gc.log";
+      StandardErrorPath = "/var/log/nix-gc.log";
+    };
+  };
+  launchd.daemons.nix-optimise = lib.mkIf config.nix.optimise.automatic {
+    serviceConfig = {
+      ProcessType = "Background";
+      LowPriorityIO = true;
+      StandardOutPath = "/var/log/nix-optimise.log";
+      StandardErrorPath = "/var/log/nix-optimise.log";
+    };
   };
 
   programs.zsh.enable = true;
 
-  system.configurationRevision = null;
   system.stateVersion = 6;
   system.primaryUser = "gurinderu";
 
