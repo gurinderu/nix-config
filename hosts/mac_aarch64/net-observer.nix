@@ -68,9 +68,10 @@
 #                churns utuns (see the escalation comment at the gate below).
 #                A second repair path covers the job being GONE from launchd
 #                entirely (manual bootout never re-bootstrapped, or BTM
-#                disallow): sb= empty for 3+ ticks with the service missing
-#                → bootstrap it back, and if THAT fails, log + notify the
-#                console user (BTM needs a human in System Settings).
+#                disallow): `launchctl print` missing the service for 3+
+#                ticks → bootstrap it back from the current generation's
+#                plist, and if THAT fails, log + notify the console user
+#                (BTM needs a human in System Settings).
 #                Kill switch without a rebuild (covers both paths):
 #                  touch /var/lib/net-observer/watchdog-off
 #
@@ -125,6 +126,13 @@ let
   # users/gurinderu/sing-box-config.nix. If the file is missing (first switch
   # before home-manager activation) the vless probes are skipped, not fatal.
   singBoxConfigPath = "${config.users.users.gurinderu.home}/.config/sing-box/config.json";
+
+  # Resolved launchd label of the sing-box daemon, read from the config the
+  # same way user-agents.nix does ("so the two can never drift"): the watchdog
+  # below kickstarts and re-bootstraps this label, and a hardcoded string
+  # would survive a daemon rename as a watchdog kicking a nonexistent job,
+  # discovered during the next outage.
+  singBoxLabel = config.launchd.daemons.sing-box.serviceConfig.Label;
   logPath = "/var/log/net-observer.log";
   jq = "${pkgs.jq}/bin/jq";
 
@@ -498,12 +506,26 @@ let
 
     prev_snap=""
     wedge_ticks=0
-    last_kick=0
     last_skip=0
-    kick_streak=0
-    sb_gone_ticks=0
+    job_gone_ticks=0
     last_bootstrap=0
     last_btm_notify=0
+    # Escalation state is deliberately PERSISTENT (/var/lib/net-observer):
+    # the multi-hour outage the backoff exists for is exactly when the user
+    # runs a repair `darwin-rebuild switch`, which reloads this daemon —
+    # process-local counters would reset the anti-storm guarantee at the
+    # worst possible moment. last_kick is wall-clock, so a backoff that
+    # elapsed while the daemon was down stays elapsed. Only digits are
+    # trusted; anything else (missing file, first boot) falls back to 0.
+    read_state() {
+      v=$(/bin/cat "/var/lib/net-observer/$1" 2>/dev/null)
+      case "$v" in
+        "" | *[!0-9]*) v=0 ;;
+      esac
+      printf '%s' "$v"
+    }
+    kick_streak=$(read_state kick_streak)
+    last_kick=$(read_state last_kick)
     dns_incident=0
     prev_link_snap=""
     last_good_snap="(none yet)"
@@ -635,11 +657,18 @@ let
       esac
 
       vls=""
-      vips=$(${jq} -r '[.outbounds[]? | select(.type == "vless") | .server] | unique | join(" ")' \
+      # server:port PAIRS, not bare IPs. The fleet mixes XTLS-Vision on :443
+      # with Reality-over-gRPC on other ports, and IPs are SHARED between
+      # nodes — the old by-IP `unique` collapsed each shared IP into a single
+      # :443 probe, so the gRPC listeners were never measured at all, while
+      # the column read as fleet-wide health (the 2026-09-05 urltest
+      # reordering was argued partly from that blind column). Probing the
+      # actual (server, port) endpoints makes vless[] mean what it says.
+      vips=$(${jq} -r '[.outbounds[]? | select(.type == "vless") | "\(.server):\(.server_port)"] | unique | join(" ")' \
         "${singBoxConfigPath}" 2>/dev/null)
       if [ -n "$vips" ]; then
-        for ip in $vips; do
-          vls="$vls vless[$ip]=$(probe_tcp "$ip" 443 "$iface")"
+        for hp in $vips; do
+          vls="$vls vless[$hp]=$(probe_tcp "''${hp%:*}" "''${hp##*:}" "$iface")"
         done
       else
         vls=" vless=skip"
@@ -773,8 +802,11 @@ let
       # 3.34s at load 65, against ~0.1s idle). Restarting then is actively
       # harmful — it tears down every live flow and the fresh process is just
       # as starved, so the kick repeats on the backoff forever. That is what
-      # 2026-07-27 00:26->09:06 was: 99 kicks, 12-13 restarts an hour for nine
-      # hours, every one logging "tunnel dead 7 ticks", none curing anything.
+      # the 2026-07-28..30 storms were (replayed: all 54 of their kicks are
+      # suppressed by this gate). NB 2026-07-27 00:26->09:06 — 99 kicks over
+      # nine hours, none curing anything — was the OTHER failure class: a
+      # fleet-side block at load ~3.5, which this load gate deliberately does
+      # not cover; the escalating backoff below is what bounds that one.
       # Across 7401 ticks the split is unambiguous: at load1 >= 64 half the
       # probes fail (51.6%) with even the direct path inflated 7x, while the
       # 8-32 band is essentially clean (0-0.4%) — so genuine wedges are the
@@ -796,29 +828,38 @@ let
       # sing-box job produces (no TUN routes, curl goes out the physical NIC);
       # that state is repaired by the bootstrap block below, and a stale
       # streak there would only delay the first kick after repair.
-      if [ "$tun" = "204" ]; then
+      if [ "$tun" = "204" ] && [ "$kick_streak" != 0 ]; then
         kick_streak=0
+        printf '%s' 0 > /var/lib/net-observer/kick_streak
       fi
       if [ "$wedge_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
         now_s=$(/bin/date +%s)
-        shift_n=$kick_streak
-        [ "$shift_n" -gt 4 ] && shift_n=4
-        backoff=$((300 << shift_n))
-        [ "$backoff" -gt 3600 ] && backoff=3600
-        if [ $((now_s - last_kick)) -ge "$backoff" ]; then
-          if /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
-            echo "$ts ACT tunnel dead $wedge_ticks ticks, direct path up -> kickstart sing-box (streak $kick_streak, backoff ''${backoff}s)"
-            /bin/launchctl kickstart -k system/org.nixos.sing-box \
-              || echo "$ts ACT kickstart failed -- job not loaded? the bootstrap repair below will pick it up"
-            kick_streak=$((kick_streak + 1))
-            last_kick=$now_s
-            wedge_ticks=0
-          elif [ $((now_s - last_skip)) -ge 300 ]; then
-            # Deliberately leaves last_kick and wedge_ticks alone: the moment
-            # load drops the next tick kicks immediately, with no backoff to
-            # wait out. last_skip only rate-limits this line to one per 5 min.
+        if ! /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
+          # The starvation verdict keeps its own flat 5-min rate limit,
+          # OUTSIDE the escalating backoff: it is a diagnostic (the primary
+          # starvation-vs-wedge discriminator this log exists for), not an
+          # action, and must not go quiet for up to an hour just because
+          # earlier kicks ratcheted the backoff. Deliberately leaves
+          # last_kick and wedge_ticks alone: the moment load drops the next
+          # tick kicks immediately, with no backoff to wait out.
+          if [ $((now_s - last_skip)) -ge 300 ]; then
             echo "$ts ACT suppressed: tunnel dead $wedge_ticks ticks but load1=$load1 -> host starvation, restart would not cure it"
             last_skip=$now_s
+          fi
+        else
+          shift_n=$kick_streak
+          [ "$shift_n" -gt 4 ] && shift_n=4
+          backoff=$((300 << shift_n))
+          [ "$backoff" -gt 3600 ] && backoff=3600
+          if [ $((now_s - last_kick)) -ge "$backoff" ]; then
+            echo "$ts ACT tunnel dead $wedge_ticks ticks, direct path up -> kickstart sing-box (streak $kick_streak, backoff ''${backoff}s)"
+            /bin/launchctl kickstart -k system/${singBoxLabel} \
+              || echo "$ts ACT kickstart failed -- job not loaded? the bootstrap repair below will pick it up"
+            kick_streak=$((kick_streak + 1))
+            printf '%s' "$kick_streak" > /var/lib/net-observer/kick_streak
+            last_kick=$now_s
+            printf '%s' "$last_kick" > /var/lib/net-observer/last_kick
+            wedge_ticks=0
           fi
         fi
       fi
@@ -830,36 +871,62 @@ let
       # disallowing the job so activation's bootstrap loads nothing
       # (2026-09-03, see ./btm-check.nix). In both states the wedge watchdog
       # above is BLIND: with no TUN routes the tun curl goes straight out the
-      # physical NIC and returns 204, so wedge_ticks never accumulates. The
-      # reliable signal is the process being gone: sb= empty for 3+ ticks,
-      # while a normal restart's lsof-on-cache.db wait keeps sb= empty for at
-      # most ~2 ticks. Guarded by `launchctl print` so a loaded-but-
-      # crash-looping job (launchd's problem, not ours) is left alone, and by
-      # the same watchdog-off flag as the kick path.
-      case "$sb" in
-        "") sb_gone_ticks=$((sb_gone_ticks + 1)) ;;
-        *) sb_gone_ticks=0 ;;
-      esac
-      if [ "$sb_gone_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
+      # physical NIC and returns 204, so wedge_ticks never accumulates.
+      #
+      # The signal is `launchctl print` itself — authoritative and stable
+      # across normal restarts (a kickstarted job never leaves the domain, so
+      # this can't false-positive during the lsof-on-cache.db wait). NOT the
+      # sb= pgrep column: `pgrep -f "sing-box run"` matches any process whose
+      # argv contains the string, so the operator's own diagnosis (`grep
+      # 'sing-box run' /var/log/net-observer.log`, an editor buffer) would
+      # reset the counter and defer the repair indefinitely — the exact
+      # moment it is needed. 3 consecutive failures (~45s) so one transient
+      # launchctl hiccup under load doesn't trigger a bootstrap.
+      #
+      # Scope, honestly: this repairs sing-box FROM net-observer, and on
+      # 2026-09-03 BTM disallowed net-observer too — when the repairer itself
+      # is the missing job, nothing here runs. Fleet-wide coverage is the
+      # activation-time sweep in ./user-agents.nix (every declared daemon and
+      # agent, on every switch); this block only shortens the gap between
+      # switches for the one daemon the network depends on.
+      if /bin/launchctl print system/${singBoxLabel} >/dev/null 2>&1; then
+        job_gone_ticks=0
+      else
+        job_gone_ticks=$((job_gone_ticks + 1))
+      fi
+      if [ "$job_gone_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
         now_s=$(/bin/date +%s)
-        if [ $((now_s - last_bootstrap)) -ge 300 ] \
-          && ! /bin/launchctl print system/org.nixos.sing-box >/dev/null 2>&1; then
+        if [ $((now_s - last_bootstrap)) -ge 300 ]; then
           last_bootstrap=$now_s
-          if out=$(/bin/launchctl bootstrap system /Library/LaunchDaemons/org.nixos.sing-box.plist 2>&1); then
+          # Bootstrap the current generation's own immutable plist, not the
+          # mutable /Library/LaunchDaemons copy: the mutable dir is synced
+          # only by activation — the very mechanism whose failure modes this
+          # block repairs — and a root daemon must not re-load a file that
+          # could be half-written or foreign (this machine has history of a
+          # hand-installed netbird plist in exactly that dir). The
+          # /run/current-system copy always matches the running generation.
+          if out=$(/bin/launchctl bootstrap system "/run/current-system/Library/LaunchDaemons/${singBoxLabel}.plist" 2>&1); then
             echo "$ts ACT sing-box job was not loaded (bootout without bootstrap, or BTM) -> bootstrapped"
           else
             # error 5 ("Input/output error") here is BTM's refusal signature —
             # nothing this daemon can override; a human has to flip the toggle
             # in System Settings -> General -> Login Items & Extensions. Put it
-            # on screen (root can't post a notification directly; asuser as
-            # the console user can), rate-limited to one per 30 min.
+            # on screen, rate-limited to one per 30 min. Notification detail:
+            # asuser only switches the Mach bootstrap context, so pair it with
+            # sudo -u to actually drop to the console user (the repo idiom,
+            # see user-agents.nix) — root-posted notifications are the ones
+            # NotificationCenter silently drops. Backgrounded: everything
+            # slow in this loop is either time-bounded or &'d, and a GUI call
+            # into a starved session is exactly the kind of thing that would
+            # otherwise wedge the 15s tick loop for good.
+            out=$(printf '%s' "$out" | /usr/bin/tr '\n' ' ')
             echo "$ts ACT sing-box job gone and bootstrap FAILED: $out"
             cuid=$(/usr/bin/stat -f %u /dev/console 2>/dev/null)
             if [ -n "$cuid" ] && [ "$cuid" != "0" ] && [ $((now_s - last_btm_notify)) -ge 1800 ]; then
               last_btm_notify=$now_s
-              /bin/launchctl asuser "$cuid" /usr/bin/osascript \
+              /bin/launchctl asuser "$cuid" /usr/bin/sudo -u "#$cuid" /usr/bin/osascript \
                 -e 'display notification "sing-box launchd job is gone and bootstrap failed (BTM?). VPN is down until re-enabled in System Settings." with title "net-observer"' \
-                2>/dev/null || true
+                >/dev/null 2>&1 &
             fi
           fi
         fi
@@ -881,6 +948,14 @@ in
     RunAtLoad = true;
     KeepAlive = true;
     ThrottleInterval = 5;
+    # The watchdog's decisions are functions of this process's OWN scheduling
+    # (a 4s tun curl, 15s ticks): starved probes read as a dead tunnel, the
+    # kick streak ratchets on a scheduling artefact, and the load gate reads
+    # a load it is itself a victim of. sing-box got the same treatment for
+    # the same reason (./sing-box.nix, 2026-07-24); the observer stays a
+    # touch below it (no Nice boost) — it must outrun the build storm, not
+    # compete with the packet path.
+    ProcessType = "Interactive";
     # launchd opens the log before running the program, hence /var/log (always
     # exists). Rotation is handled by the sing-box-logrotate daemon — this log
     # is listed in its config (see ./sing-box.nix).
