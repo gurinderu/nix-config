@@ -83,6 +83,8 @@
 let
   # Single source of truth: the pin set in configuration.nix.
   wantDns = lib.head config.networking.dns;
+  # The fakeip pool, for the AWDL collision guard in the loop below.
+  fakeipRange = import ../../users/gurinderu/fakeip-range.nix;
   # Liveness probe for sing-box. NOT the same address as the pin any more: the
   # pin is an interface alias installed by sing-box's start script
   # (./sing-box.nix), so it is present whether or not sing-box is healthy and
@@ -251,6 +253,47 @@ let
           fi
         fi
       fi
+
+      # --- AWDL fakeip-collision guard ---------------------------------------
+      # macOS hands Apple's peer-to-peer interfaces (awdl0/llw0: AirDrop,
+      # AirPlay, Handoff, Sidecar, Instant Hotspot discovery) a self-assigned
+      # IPv4 address, and its allocator has now collided with the fakeip pool
+      # THREE times across two unrelated blocks: awdl0 took 198.18.2.58/24
+      # (2026-09-01), then 198.19.2.0/24 (2026-09-03, inside the very /16
+      # carved out to dodge the first), then 172.24.1.235/16 (2026-09-05,
+      # inside the RFC1918 range the pool had moved to precisely to escape
+      # that class of bug — users/gurinderu/fakeip-range.nix tells the story).
+      # A connected route on awdl0 beats the TUN's aggregate chunk routes for
+      # the whole claimed subnet, so every fakeip inside it dies instantly
+      # (no-route in ~3ms) — and since the pool allocates sequentially from
+      # the bottom, a /16 claim at 172.24.x kills effectively every
+      # frequently-used domain at once. The user's long-standing manual
+      # `ifconfig awdl0 down` ritual was treating exactly this without
+      # knowing why. Range-hopping is demonstrably whack-a-mole, so: strip
+      # the colliding alias the moment it appears. Scoped to awdl*/llw*
+      # ONLY — a physical interface holding an address inside the pool means
+      # a real LAN actually uses the range (the residual risk
+      # fakeip-range.nix accepts), and fighting DHCP in a loop would be
+      # worse than the collision, so that case is only logged. AirDrop
+      # survives the strip: AWDL's transport is IPv6 link-local, the IPv4
+      # alias is incidental.
+      for ifc in $(/sbin/ifconfig -l); do
+        case "$ifc" in
+          lo0 | utun* | gif* | stf* | anpi* | bridge*) continue ;;
+        esac
+        for a in $(/sbin/ifconfig "$ifc" 2>/dev/null | /usr/bin/awk '/inet /{print $2}'); do
+          /usr/bin/python3 -c "import ipaddress,sys; raise SystemExit(0 if ipaddress.ip_address(sys.argv[1]) in ipaddress.ip_network('${fakeipRange}') else 1)" "$a" 2>/dev/null || continue
+          case "$ifc" in
+            awdl* | llw*)
+              log "$ifc holds $a inside the fakeip pool ${fakeipRange} - stripping the alias (it hijacks fakeip routing)"
+              /sbin/ifconfig "$ifc" -alias "$a" 2>/dev/null || true
+              ;;
+            *)
+              log "WARNING: $ifc holds $a inside the fakeip pool ${fakeipRange} - a real network uses the range; NOT stripping, fakeips in that subnet will misroute"
+              ;;
+          esac
+        done
+      done
 
       /bin/sleep 30
     done

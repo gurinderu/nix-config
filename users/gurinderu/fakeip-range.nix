@@ -29,13 +29,24 @@
 #    awdl0 can and does land anywhere in it. This is why the pool is moved
 #    OUT of 198.18.0.0/15 entirely rather than sliced again.
 #
+# 4) The premise of the move in (3) — "the failure mode is specific to
+#    198.18.0.0/15" — is DEAD, measured 2026-09-05: hours into the new range,
+#    `awdl0 inet 172.24.1.235 netmask 0xffff0000` — a /16 claim INSIDE
+#    172.24.0.0/14, blackholing the entire bottom /16 the pool allocates
+#    from first (route -n get on any fresh fakeip: interface awdl0, connect
+#    fails in ~3ms; the whole post-rebuild "tunnel dead" of that evening).
+#    macOS's P2P allocator collides with wherever the pool lives; three
+#    collisions across two unrelated blocks make range-hopping whack-a-mole.
+#    So the range STAYS 172.24.0.0/14 and the defense moved to a guard:
+#    hosts/mac_aarch64/dns-fallback.nix strips any awdl*/llw* IPv4 alias
+#    that lands inside this pool (and logs, without stripping, a REAL
+#    network using it — the residual risk below).
+#
 # New range: 172.24.0.0/14 (172.24.0.0-172.27.255.255), private RFC 1918
 # space, chosen instead of another RFC 2544 slice because that whole benchmark
 # block is exactly what macOS reaches into for awdl0/AWDL-adjacent interfaces
-# — the failure mode in (2) and (3) is specific to 198.18.0.0/15, not to
-# "some external allocator picked our range", so leaving that block for good
-# removes the entire class of bug rather than betting we found the last
-# collision in it.
+# — the failure mode in (2) and (3) was thought specific to 198.18.0.0/15
+# (see (4): it is not, the guard is what actually closes the class).
 #
 # Why 172.24.0.0/14 specifically, not another RFC 1918 corner:
 #   - Not 172.16.0.0/12 broadly: 172.17.0.0/16 is Docker's own default bridge
