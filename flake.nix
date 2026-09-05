@@ -118,15 +118,36 @@
       # system.build.toplevel for nixosConfigurations but has NO darwin
       # equivalent — proven empirically 2026-09-05: a flake with a
       # guaranteed-throwing darwinConfigurations entry still gets "all checks
-      # passed!". So without this line every hosts/mac_aarch64 change ships
-      # with zero eval coverage, and the first sign of a bad option (e.g. a
+      # passed!". So without this every hosts/mac_aarch64 change ships with
+      # zero eval coverage, and the first sign of a bad option (e.g. a
       # nix-darwin bump renaming nix.gc.* — its removed-option stubs are
       # already in the locked rev) is a failed `darwin-rebuild switch` on the
-      # fail-closed Mac. `.system` is the derivation whose eval forces the
-      # whole module tree; from Linux run
-      # `nix flake check --all-systems` (or eval the drvPath directly) to
-      # exercise it.
-      checks.aarch64-darwin.mac-system = self.darwinConfigurations."mac_aarch64".system;
+      # fail-closed Mac.
+      #
+      # Shape matters here, twice over. A `checks.aarch64-darwin.* = ...system`
+      # entry would be SKIPPED by the default `nix flake check` on the
+      # x86_64-linux box this repo is edited on (checks run for the current
+      # system only; nothing mechanical supplies --all-systems), and on the
+      # Mac itself flake check REALISES its checks — building the entire
+      # darwin closure on the fanless machine whose build storms this config
+      # fights. So instead: a trivial x86_64-linux derivation whose ENV holds
+      # the darwin system's drvPath — computing that env at instantiation
+      # time forces the full darwin module eval on the default gate, while
+      # the build itself is one echo. Residual gap, named on purpose: build
+      # phases of darwin derivations (nix-darwin's shellcheck over activate,
+      # writeShellScript's bash -n) still run only at switch time on the Mac.
+      # unsafeDiscardStringContext is load-bearing: drvPath carries a
+      # derivation context, and without discarding it this x86_64-linux check
+      # would try to BUILD the referenced aarch64-darwin closure (observed:
+      # "platform mismatch" on a darwin-only patch drv). Discarding keeps
+      # exactly what we want — computing the string still forces the full
+      # darwin module eval — while the check's own build stays one echo.
+      checks.x86_64-linux.mac-system-eval =
+        nixpkgs.legacyPackages.x86_64-linux.runCommand "mac-system-eval"
+          {
+            macSystemDrv = builtins.unsafeDiscardStringContext self.darwinConfigurations."mac_aarch64".system.drvPath;
+          }
+          ''printf '%s\n' "$macSystemDrv" > $out'';
 
       nixosConfigurations."thinkpad-x1-gen12" = import ./hosts/thinkpad-x1-gen12 {
         inherit

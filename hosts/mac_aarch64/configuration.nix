@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, lib, config, ... }:
 {
   imports = [
     ./sing-box.nix
@@ -114,12 +114,23 @@
     #
     # The two knobs are independent: `cores` is per-derivation (NIX_BUILD_CORES;
     # nixpkgs' cargo hook passes it as -j), `max-jobs` is how many derivations
-    # build at once — the machine-wide worst case is their PRODUCT. 2 x 2 = at
-    # most 4 build threads (and at most ~4 concurrent linkers, under the
-    # five-1GB-linker signature that swapped the box out on 2026-07-30), i.e.
-    # half the machine even before the QoS demotion below.
+    # build at once — the machine-wide worst case is their PRODUCT: 2 x 2 ~= 4
+    # cooperating build threads (and ~4 concurrent linkers, under the
+    # five-1GB-linker signature that swapped the box out on 2026-07-30).
+    # "~=" because NIX_BUILD_CORES is a REQUEST to well-behaved builders
+    # (make/ninja/cargo -j), not a hard thread cap — a rogue build can still
+    # exceed it, which is why the QoS demotion below, not this arithmetic,
+    # is the load-bearing half.
     max-jobs = 2;
     cores = 2;
+
+    # Emergency disk guard, distinct from the scheduled GC below: when free
+    # space falls under min-free mid-build, nix pauses and collects garbage
+    # up to max-free before continuing — the guard for exactly the
+    # "afternoon of builds fills the disk between 04:00 sweeps" incident
+    # (2026-09-02..04, twice). Both default to off.
+    min-free = 10737418240; # 10 GiB
+    max-free = 53687091200; # 50 GiB
   };
 
   # The scheduler-priority half of the same fix: run the nix daemon and every
@@ -127,6 +138,11 @@
   # build storm and sing-box (ProcessType=Interactive, Nice=-10) race for the
   # cores, the packet path wins. Unlike the count caps above this also covers
   # the case where somebody legitimately raises -j for one build.
+  #
+  # Deliberately UNCONDITIONAL, including for a repair `darwin-rebuild
+  # switch` during an outage: that switch is substitution-dominated (network
+  # -bound through the tunnel, not CPU-bound), and a slower repair beats a
+  # repair that competes with the packet path it is trying to restore.
   nix.daemonProcessType = "Background";
   nix.daemonIOLowPriority = true;
 
@@ -138,13 +154,14 @@
   # nix-collect-garbage. 14d keeps enough generations to roll back a bad
   # switch while bounding the store; GC runs daily at 04:00 because the build
   # churn on this machine outpaces a weekly sweep, dedup weekly on Sunday at
-  # 05:00 — explicitly an hour AFTER the GC slot, not nix-darwin's 04:15
-  # default, so the two never overlap. launchd coalesces missed calendar
-  # fires into one run at wake, so a Mac asleep at 04:00 runs them at
-  # lid-open — which is also when sing-box re-establishes the TUN; that is
-  # why both daemons get the Background/low-IO demotion below (same
-  # reasoning as nix.daemonProcessType above) instead of the default
-  # unthrottled root job.
+  # 05:00 rather than nix-darwin's 04:15 default so the two are separated
+  # whenever the Mac is awake at both slots. That separation is best-effort
+  # only: launchd coalesces MISSED calendar fires into one run at wake, so a
+  # Mac asleep through Sunday 04:00-05:00 runs GC and dedup together at
+  # lid-open — which is also when sing-box re-establishes the TUN. The
+  # Background/low-IO demotion below (same reasoning as
+  # nix.daemonProcessType above) is what actually protects that window;
+  # the schedule offset just makes the common awake case cheaper.
   nix.gc = {
     automatic = true;
     interval = {
@@ -166,17 +183,25 @@
   # failing nightly GC reproduces the unnoticed-full-disk incident), so give
   # both the same log-file convention as every other daemon on this host —
   # rotation happens via the sing-box-logrotate stanza (./sing-box.nix).
-  launchd.daemons.nix-gc.serviceConfig = {
-    ProcessType = "Background";
-    LowPriorityIO = true;
-    StandardOutPath = "/var/log/nix-gc.log";
-    StandardErrorPath = "/var/log/nix-gc.log";
+  # Gated on the same `automatic` flags as the daemons themselves: nix-darwin
+  # defines these jobs only under mkIf automatic, and an unconditional
+  # serviceConfig here would otherwise materialize a loaded, program-less
+  # plist the day either flag is turned off.
+  launchd.daemons.nix-gc = lib.mkIf config.nix.gc.automatic {
+    serviceConfig = {
+      ProcessType = "Background";
+      LowPriorityIO = true;
+      StandardOutPath = "/var/log/nix-gc.log";
+      StandardErrorPath = "/var/log/nix-gc.log";
+    };
   };
-  launchd.daemons.nix-optimise.serviceConfig = {
-    ProcessType = "Background";
-    LowPriorityIO = true;
-    StandardOutPath = "/var/log/nix-optimise.log";
-    StandardErrorPath = "/var/log/nix-optimise.log";
+  launchd.daemons.nix-optimise = lib.mkIf config.nix.optimise.automatic {
+    serviceConfig = {
+      ProcessType = "Background";
+      LowPriorityIO = true;
+      StandardOutPath = "/var/log/nix-optimise.log";
+      StandardErrorPath = "/var/log/nix-optimise.log";
+    };
   };
 
   programs.zsh.enable = true;

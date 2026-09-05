@@ -454,9 +454,11 @@ in
     # fail over between.
     (mkVless 8) # foreign exit 194.87.208.142 (tcp)
     {
-      # Route through whichever backend is fastest right now: urltest probes each
-      # member on `interval`, picks the lowest-latency one, and fails over
-      # automatically when it slows down or drops. Foreign exits ONLY — the RU
+      # Route through whichever backend is fastest right now: urltest probes
+      # each member on `interval` and picks the lowest-latency one. NB
+      # "fails over automatically" holds only while probes SUCCEED — during
+      # an incident the history-wipe bug below removes failover entirely, see
+      # the ordering comment. Foreign exits ONLY — the RU
       # exit (7) is deliberately not a member (see its comment above): when the
       # whole foreign fleet is down, dials fail and no traffic flows, rather
       # than silently egressing from Russia. sing-box has no "fallback to
@@ -482,13 +484,16 @@ in
       # new default vless-out-8 is the one member with no subscription-side
       # replacement path (see its comment above), the trade accepted for it
       # being the cleanest node.
+      # (Server IPs deliberately not restated here — they are sops-encrypted
+      # in sing-box-secrets.nix, and comments in a git-tracked, store-readable
+      # file should not undo that.)
       outbounds = map (n: "vless-out-${toString n}") [
-        8 # Timeweb AMS 194.87.208.142, tcp — cleanest, the frozen default
+        8 # Timeweb AMS, tcp — cleanest, the frozen default
         4 # Poland 1, tcp
-        5 # Poland 2, grpc
+        5 # Poland 2, grpc (shares Poland 1's server)
         6 # Poland 3, grpc
-        2 # Germany 2, grpc (GHOSTNET)
-        3 # Germany 3, grpc (GHOSTNET, = the historically rotten 94.103.168.145)
+        2 # Germany 2, grpc (GHOSTNET, shares Germany 1's server)
+        3 # Germany 3, grpc (GHOSTNET — the historically rotten node)
         1 # Germany 1, tcp (GHOSTNET — 2026-09-05 EOF storm) — LAST on purpose
       ];
       url = "https://www.gstatic.com/generate_204";

@@ -59,7 +59,14 @@ nix-darwin.lib.darwinSystem {
     # pointed at one file interleave, which would corrupt the very record the
     # migration is being judged against.
     inputs.net-observer.darwinModules.default
-    { services.net-observer.enable = true; }
+    {
+      services.net-observer.enable = true;
+      # The module sets no QoS band, and this daemon's DuckDB record is the
+      # forensic oracle the migration is judged against — under a build
+      # storm (Background QoS since 2026-09-05) it must keep observing, same
+      # reasoning as the shell observer's ProcessType in net-observer.nix.
+      launchd.daemons.net-observerd.serviceConfig.ProcessType = "Interactive";
+    }
     inputs.nix-homebrew.darwinModules.nix-homebrew
     {
       nix-homebrew = {
