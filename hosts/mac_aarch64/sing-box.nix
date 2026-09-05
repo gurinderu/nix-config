@@ -44,6 +44,13 @@ let
   stateDir = "/var/lib/sing-box";
   logPath = "/var/log/sing-box.log";
 
+  # Resolved label of the main daemon, read back from the config (the same
+  # can-never-drift rationale as net-observer.nix): the reload/netreload
+  # daemons and the postActivation kickstart below all target this label,
+  # and a hardcoded copy would survive a rename as helpers kicking a
+  # nonexistent job.
+  singBoxLabel = config.launchd.daemons.sing-box.serviceConfig.Label;
+
   start = pkgs.writeShellScript "sing-box-start" ''
     mkdir -p ${stateDir}
     chmod 700 ${stateDir}
@@ -169,9 +176,15 @@ except Exception:
   # /var/log/net-observer.log and /var/log/dns-fallback.log are written by the
   # net-observer and dns-fallback daemons (./net-observer.nix, ./dns-fallback.nix);
   # they share this rotation so no second logrotate daemon is needed. Keep the
-  # paths in sync with those modules.
+  # paths in sync with those modules. Same deal for the Rust observer's
+  # net-observerd.log (its darwin module sets the path but rotates nothing),
+  # netbird's launchd stdout/stderr sinks (netbird rotates its own client.log
+  # but launchd-owned append fds are outside its reach — and with RunAtLoad
+  # the retry loops write them continuously), and the nix-gc/nix-optimise
+  # logs added in ./configuration.nix. missingok already covers any of them
+  # not existing yet.
   logrotateConf = pkgs.writeText "sing-box-logrotate.conf" ''
-    ${logPath} /var/log/net-observer.log /var/log/dns-fallback.log {
+    ${logPath} /var/log/net-observer.log /var/log/dns-fallback.log ${config.services.net-observer.logFile} /var/log/netbird.out.log /var/log/netbird.err.log /var/log/nix-gc.log /var/log/nix-optimise.log {
         su root wheel
         size 20M
         rotate 5
@@ -261,7 +274,7 @@ in
       "/bin/launchctl"
       "kickstart"
       "-k"
-      "system/org.nixos.sing-box"
+      "system/${singBoxLabel}"
     ];
     WatchPaths = [ configDir ];
     ThrottleInterval = 3;
@@ -341,7 +354,7 @@ in
           /bin/echo "$(/bin/date '+%z %Y-%m-%d %H:%M:%S') INFO netreload: skip kickstart, sing-box healthy since $since" >> ${logPath}
           exit 0
         fi
-        exec /bin/launchctl kickstart -k system/org.nixos.sing-box
+        exec /bin/launchctl kickstart -k system/${singBoxLabel}
       ''
     ];
     WatchPaths = [ "/etc/resolv.conf" ];
@@ -403,7 +416,7 @@ in
       startedMtime=$(/usr/bin/stat -f %m ${stateDir}/started 2>/dev/null || echo 0)
       if [ "$configMtime" -gt "$startedMtime" ]; then
         echo "sing-box: config.json is newer than the running process; kickstarting" >&2
-        /bin/launchctl kickstart -k system/org.nixos.sing-box \
+        /bin/launchctl kickstart -k system/${singBoxLabel} \
           || echo "warning: could not kickstart sing-box (not loaded yet?)" >&2
       fi
     fi

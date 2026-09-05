@@ -454,23 +454,47 @@ in
     # fail over between.
     (mkVless 8) # foreign exit 194.87.208.142 (tcp)
     {
-      # Route through whichever backend is fastest right now: urltest probes each
-      # member on `interval`, picks the lowest-latency one, and fails over
-      # automatically when it slows down or drops. Foreign exits ONLY — the RU
+      # Route through whichever backend is fastest right now: urltest probes
+      # each member on `interval` and picks the lowest-latency one. NB
+      # "fails over automatically" holds only while probes SUCCEED — during
+      # an incident the history-wipe bug below removes failover entirely, see
+      # the ordering comment. Foreign exits ONLY — the RU
       # exit (7) is deliberately not a member (see its comment above): when the
       # whole foreign fleet is down, dials fail and no traffic flows, rather
       # than silently egressing from Russia. sing-box has no "fallback to
       # block-out" notion in urltest, so fail-by-dead-dial IS the block here.
       type = "urltest";
       tag = "vless-auto";
-      outbounds = [
-        "vless-out-1"
-        "vless-out-2"
-        "vless-out-3"
-        "vless-out-4"
-        "vless-out-5"
-        "vless-out-6"
-        "vless-out-8"
+      # Member ORDER is load-bearing, not cosmetic: urltest with an empty
+      # probe history defaults to the FIRST member, and probe failures DELETE
+      # a member's history (upstream SagerNet/sing-box#4255, fix PR #4256
+      # still unmerged as of 2026-09-05) — so during any incident the
+      # selector degenerates to "first member, frozen". Two months of
+      # observer logs show sel pinned to the first entry through every storm,
+      # including the 8.5h outage of 2026-07-27.
+      #
+      # Be precise about what the ordering buys: it does NOT restore
+      # incident-time failover (only pinning past #4256 or a fallback-style
+      # group would), it only picks WHICH node the group freezes on — so it
+      # leads with the cleanest exit and ends with the GHOSTNET 94.103.168.x
+      # nodes (night outages, TCP-blackholed from MegaFon cellular, the
+      # 2026-09-05 EOF storm). Caveats owned deliberately: the order is
+      # global for both consumers (mac + thinkpad) — same subscription, same
+      # fleet, and the frozen-default logic is platform-independent; and the
+      # new default vless-out-8 is the one member with no subscription-side
+      # replacement path (see its comment above), the trade accepted for it
+      # being the cleanest node.
+      # (Server IPs deliberately not restated here — they are sops-encrypted
+      # in sing-box-secrets.nix, and comments in a git-tracked, store-readable
+      # file should not undo that.)
+      outbounds = map (n: "vless-out-${toString n}") [
+        8 # Timeweb AMS, tcp — cleanest, the frozen default
+        4 # Poland 1, tcp
+        5 # Poland 2, grpc (shares Poland 1's server)
+        6 # Poland 3, grpc
+        2 # Germany 2, grpc (GHOSTNET, shares Germany 1's server)
+        3 # Germany 3, grpc (GHOSTNET — the historically rotten node)
+        1 # Germany 1, tcp (GHOSTNET — 2026-09-05 EOF storm) — LAST on purpose
       ];
       url = "https://www.gstatic.com/generate_204";
       interval = "1m";
