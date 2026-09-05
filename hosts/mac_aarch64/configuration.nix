@@ -96,7 +96,11 @@
     #
     # 12 parallel fetches sustain ~40 MB/s aggregate through the same node, so
     # 8 leaves comfortable headroom. Raise only if the exit gains multiplexing
-    # or cache.nixos.org ever gets routed direct-out.
+    # or cache.nixos.org ever gets routed direct-out. NB the figures were
+    # measured against vless-out-1; since the 2026-09-05 urltest reorder the
+    # empty-history default exit is vless-out-8, whose burst tolerance has not
+    # been measured — treat 8 as a floor from a different node, and re-measure
+    # there if substitutions start dying mid-transfer again.
     http-connections = 8;
 
     # Build parallelism cap. nix's default ("use everything") stacked on top
@@ -106,11 +110,25 @@
     # the userspace sing-box process, so host starvation IS a network outage
     # here: at load1 >= 64 over half the tunnel probes fail (measured
     # 2026-07-30), and the control group is just as clear — the one night
-    # with no builds (2026-09-05 02:00-09:00) had zero failures. Two jobs at
-    # four cores each keeps nix at or under half the machine.
+    # with no builds (2026-09-05 02:00-09:00) had zero failures.
+    #
+    # The two knobs are independent: `cores` is per-derivation (NIX_BUILD_CORES;
+    # nixpkgs' cargo hook passes it as -j), `max-jobs` is how many derivations
+    # build at once — the machine-wide worst case is their PRODUCT. 2 x 2 = at
+    # most 4 build threads (and at most ~4 concurrent linkers, under the
+    # five-1GB-linker signature that swapped the box out on 2026-07-30), i.e.
+    # half the machine even before the QoS demotion below.
     max-jobs = 2;
-    cores = 4;
+    cores = 2;
   };
+
+  # The scheduler-priority half of the same fix: run the nix daemon and every
+  # build it spawns in the Background QoS band with low-priority IO, so when a
+  # build storm and sing-box (ProcessType=Interactive, Nice=-10) race for the
+  # cores, the packet path wins. Unlike the count caps above this also covers
+  # the case where somebody legitimately raises -j for one build.
+  nix.daemonProcessType = "Background";
+  nix.daemonIOLowPriority = true;
 
   # GC + store dedup on a schedule. The disk filled to zero twice around
   # 2026-09-02..04: nix itself crashed mid-build, and dns-fallback's
@@ -118,9 +136,15 @@
   # i.e. a full disk breaks the DNS repair path too, turning a disk problem
   # into a network outage. Each time the fix was a manual
   # nix-collect-garbage. 14d keeps enough generations to roll back a bad
-  # switch while bounding the store; 04:00 daily because the build churn on
-  # this machine outpaces a weekly sweep (launchd runs a missed calendar
-  # fire on the next wake, so sleep at 4am is fine).
+  # switch while bounding the store; GC runs daily at 04:00 because the build
+  # churn on this machine outpaces a weekly sweep, dedup weekly on Sunday at
+  # 05:00 — explicitly an hour AFTER the GC slot, not nix-darwin's 04:15
+  # default, so the two never overlap. launchd coalesces missed calendar
+  # fires into one run at wake, so a Mac asleep at 04:00 runs them at
+  # lid-open — which is also when sing-box re-establishes the TUN; that is
+  # why both daemons get the Background/low-IO demotion below (same
+  # reasoning as nix.daemonProcessType above) instead of the default
+  # unthrottled root job.
   nix.gc = {
     automatic = true;
     interval = {
@@ -129,11 +153,34 @@
     };
     options = "--delete-older-than 14d";
   };
-  nix.optimise.automatic = true;
+  nix.optimise = {
+    automatic = true;
+    interval = {
+      Weekday = 7;
+      Hour = 5;
+      Minute = 0;
+    };
+  };
+  # nix-darwin's gc/optimise daemons ship with no log sinks and no priority
+  # class. Silent-failure is exactly the state this block exists to end (a
+  # failing nightly GC reproduces the unnoticed-full-disk incident), so give
+  # both the same log-file convention as every other daemon on this host —
+  # rotation happens via the sing-box-logrotate stanza (./sing-box.nix).
+  launchd.daemons.nix-gc.serviceConfig = {
+    ProcessType = "Background";
+    LowPriorityIO = true;
+    StandardOutPath = "/var/log/nix-gc.log";
+    StandardErrorPath = "/var/log/nix-gc.log";
+  };
+  launchd.daemons.nix-optimise.serviceConfig = {
+    ProcessType = "Background";
+    LowPriorityIO = true;
+    StandardOutPath = "/var/log/nix-optimise.log";
+    StandardErrorPath = "/var/log/nix-optimise.log";
+  };
 
   programs.zsh.enable = true;
 
-  system.configurationRevision = null;
   system.stateVersion = 6;
   system.primaryUser = "gurinderu";
 
