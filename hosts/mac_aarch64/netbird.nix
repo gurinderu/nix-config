@@ -10,20 +10,30 @@
 # up on its own.
 #
 # Started at boot (RunAtLoad) since 2026-09-05, by request — it began as a
-# manual-only job. KeepAlive stays off so `launchctl kill TERM` still takes the
-# peer down and it STAYS down until the next boot or kickstart; the flip side
-# is that a crashed daemon is not resurrected either. Manual control:
+# manual-only job. KeepAlive = SuccessfulExit=false resurrects it after a
+# crash (an always-on mesh peer nobody watches must not die silently) while a
+# graceful stop still sticks: netbird's service runner exits 0 on SIGTERM, so
+# `launchctl kill TERM` takes the peer down and it STAYS down until the next
+# boot or kickstart. If that ever turns out false in practice (TERM followed
+# by an immediate respawn in netbird.out.log), drop back to KeepAlive = false
+# and rely on the boot start alone. Manual control:
 #
 #   sudo launchctl kickstart system/org.nixos.netbird    # bring the peer up
 #   sudo launchctl kill TERM system/org.nixos.netbird    # take it down
 #   netbird status                                       # inspect
 #   netbird-ui                                           # menu-bar app
 #
-# Caveat for hostile guest networks: a mesh client hole-punching without a
-# direct path sprays STUN/ICE UDP continuously, which is exactly what got this
-# machine's IP ban-cycled by the coworking MikroTik in July (that time it was
-# tailscale in relay mode). If the ban cycle ever comes back with netbird now
-# always on, the kill command above is the first experiment.
+# Two caveats owned deliberately with the always-on flip:
+#
+# - Hostile guest networks: a mesh client hole-punching without a direct path
+#   sprays STUN/ICE UDP continuously, which is exactly what got this machine's
+#   IP ban-cycled by the coworking MikroTik in July (then: tailscale in relay
+#   mode). If the ban cycle comes back with netbird always on, the kill
+#   command above is the first experiment.
+# - utun churn/count: net-observer.nix documents utun churn as kernel-panic
+#   exposure (2026-09-03, mbuf path); this adds one LONG-LIVED utun at boot,
+#   which is the cheap end of that trade — the panic correlate is churn from
+#   restart storms, not a stable extra interface.
 #
 # (nix-darwin prefixes daemon labels with `org.nixos.`, hence the label above
 # rather than a bare `netbird`.)
@@ -66,6 +76,24 @@ let
     # to match, so it still falls through to direct.
     export NB_DISABLE_CUSTOM_ROUTING=true
 
+    # Wait (bounded) for the sing-box TUN before dialing out. The control
+    # plane's direct path from this network is documented broken (TLS
+    # completes, nothing returns, 30s dial deadline — see the bypass rule in
+    # users/gurinderu/sing-box-config-darwin.nix): the management session only
+    # works THROUGH the proxy, and launchd has no daemon ordering, so an
+    # unguarded boot start races sing-box onto the dead direct path and sits
+    # in a retry loop (plus the STUN/ICE spray the header warns about). The
+    # gate mirrors dns-fallback's TUN probe. Bounded at 5 min, then start
+    # anyway: on a non-RU network the direct path is fine, and if sing-box is
+    # down long-term netbird's own retries are no worse than they were before
+    # this guard existed.
+    i=0
+    while [ "$i" -lt 300 ] && ! /sbin/ifconfig | /usr/bin/grep -q 'inet 172\.19\.0\.1 '; do
+      /bin/sleep 5
+      i=$((i + 5))
+    done
+    [ "$i" -ge 300 ] && echo "netbird-start: sing-box TUN not up after ''${i}s, starting on the direct path anyway"
+
     exec ${netbird}/bin/netbird service run \
       --log-level info \
       --daemon-addr unix:///var/run/netbird.sock \
@@ -92,10 +120,13 @@ in
       "/bin/wait4path /nix/store && exec ${start}"
     ];
 
-    # Auto-start at boot; no KeepAlive so a manual TERM sticks (see the header
-    # comment for the trade-off and the hostile-network caveat).
+    # Auto-start at boot; resurrect only after a CRASH (non-zero exit), so a
+    # manual TERM still sticks — see the header comment for the trade-off,
+    # the verification caveat, and the hostile-network warning.
     RunAtLoad = true;
-    KeepAlive = false;
+    KeepAlive = {
+      SuccessfulExit = false;
+    };
 
     StandardOutPath = "/var/log/netbird.out.log";
     StandardErrorPath = "/var/log/netbird.err.log";

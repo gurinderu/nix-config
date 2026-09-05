@@ -469,19 +469,27 @@ in
       # still unmerged as of 2026-09-05) — so during any incident the
       # selector degenerates to "first member, frozen". Two months of
       # observer logs show sel pinned to the first entry through every storm,
-      # including the 8.5h outage of 2026-07-27. So the list leads with the
-      # cleanest exit and ends with the GHOSTNET 94.103.168.x nodes (history
-      # of night outages, TCP-blackholed from MegaFon cellular, and the
-      # 2026-09-05 EOF storm): vless-out-8 (194.87.208.142, tcp) first, the
-      # Poland trio next, Germany/GHOSTNET last.
-      outbounds = [
-        "vless-out-8"
-        "vless-out-4"
-        "vless-out-5"
-        "vless-out-6"
-        "vless-out-2"
-        "vless-out-3"
-        "vless-out-1"
+      # including the 8.5h outage of 2026-07-27.
+      #
+      # Be precise about what the ordering buys: it does NOT restore
+      # incident-time failover (only pinning past #4256 or a fallback-style
+      # group would), it only picks WHICH node the group freezes on — so it
+      # leads with the cleanest exit and ends with the GHOSTNET 94.103.168.x
+      # nodes (night outages, TCP-blackholed from MegaFon cellular, the
+      # 2026-09-05 EOF storm). Caveats owned deliberately: the order is
+      # global for both consumers (mac + thinkpad) — same subscription, same
+      # fleet, and the frozen-default logic is platform-independent; and the
+      # new default vless-out-8 is the one member with no subscription-side
+      # replacement path (see its comment above), the trade accepted for it
+      # being the cleanest node.
+      outbounds = map (n: "vless-out-${toString n}") [
+        8 # Timeweb AMS 194.87.208.142, tcp — cleanest, the frozen default
+        4 # Poland 1, tcp
+        5 # Poland 2, grpc
+        6 # Poland 3, grpc
+        2 # Germany 2, grpc (GHOSTNET)
+        3 # Germany 3, grpc (GHOSTNET, = the historically rotten 94.103.168.145)
+        1 # Germany 1, tcp (GHOSTNET — 2026-09-05 EOF storm) — LAST on purpose
       ];
       url = "https://www.gstatic.com/generate_204";
       interval = "1m";
