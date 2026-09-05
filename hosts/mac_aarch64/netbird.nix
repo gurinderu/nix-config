@@ -54,11 +54,15 @@ let
   # entry (unlike the sing-box/net-observer logs in ./sing-box.nix).
   logDir = "/var/log/netbird";
 
-  # Self-hosted control plane. Kept in sync with the direct-out bypass in
-  # users/gurinderu/sing-box-config-darwin.nix — without that rule this hostname
-  # resolves to a fakeip and the whole control plane is routed into the VLESS
-  # proxy, so the peer can never register. (Verified 2026-07-29: a plain lookup
-  # of this name returns 198.18.2.192.)
+  # Self-hosted control plane. Kept in sync with the control-plane rule in
+  # users/gurinderu/sing-box-config-darwin.nix. NB the routing story INVERTED
+  # since the original 2026-07-29 note claimed a direct-out bypass was needed
+  # for registration: the direct path to this host from the RU network is the
+  # one that stalls (TLS completes, nothing returns), so the rule now sends
+  # the management/signal/relay sessions THROUGH the proxy — which is also
+  # why the start script below waits for the sing-box TUN, and why
+  # NB_DISABLE_CUSTOM_ROUTING keeps netbird's own sockets on the normal
+  # route table instead of binding past the TUN.
   managementUrl = "https://netbird.infrahub.cloudless.dev:443";
 
   start = pkgs.writeShellScript "netbird-start" ''
@@ -83,16 +87,26 @@ let
     # works THROUGH the proxy, and launchd has no daemon ordering, so an
     # unguarded boot start races sing-box onto the dead direct path and sits
     # in a retry loop (plus the STUN/ICE spray the header warns about). The
-    # gate mirrors dns-fallback's TUN probe. Bounded at 5 min, then start
-    # anyway: on a non-RU network the direct path is fine, and if sing-box is
-    # down long-term netbird's own retries are no worse than they were before
-    # this guard existed.
+    # gate mirrors dns-fallback's TUN probe. Bounded at 60s — enough for a
+    # normal boot (sing-box's TUN is up in seconds), short enough that the
+    # documented manual kickstart is not punished when sing-box is down (on a
+    # non-RU network the direct path is fine, and if sing-box is down
+    # long-term netbird's own retries are no worse than before this guard).
+    #
+    # TERM must stay a CLEAN exit during this wait: launchd tracks this
+    # wrapper shell until the exec, a signal death is a non-zero exit, and
+    # KeepAlive.SuccessfulExit=false would resurrect the job — turning the
+    # documented `launchctl kill TERM` kill switch into a restart. After the
+    # exec the trap is gone and netbird's own graceful-shutdown handling
+    # takes over.
+    trap 'echo "netbird-start: TERM during TUN wait - exiting cleanly"; exit 0' TERM INT
     i=0
-    while [ "$i" -lt 300 ] && ! /sbin/ifconfig | /usr/bin/grep -q 'inet 172\.19\.0\.1 '; do
+    while [ "$i" -lt 60 ] && ! /sbin/ifconfig | /usr/bin/grep -q 'inet 172\.19\.0\.1 '; do
       /bin/sleep 5
       i=$((i + 5))
     done
-    [ "$i" -ge 300 ] && echo "netbird-start: sing-box TUN not up after ''${i}s, starting on the direct path anyway"
+    [ "$i" -ge 60 ] && echo "netbird-start: sing-box TUN not up after ''${i}s, starting on the direct path anyway"
+    trap - TERM INT
 
     exec ${netbird}/bin/netbird service run \
       --log-level info \

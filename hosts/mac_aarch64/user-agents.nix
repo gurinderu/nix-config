@@ -17,7 +17,10 @@
 # no amount of `darwin-rebuild switch` fixed either.
 #
 # This hook closes the gap by checking the DOMAIN, not the file. For each
-# declared agent: `launchctl print gui/<uid>/<label>` (exit 0 = job is known
+# declared agent — nix-darwin's `launchd.user.agents` AND home-manager's
+# `launchd.agents` (both install into ~/Library/LaunchAgents, HM naming the
+# file after the label; sops-nix from the HM set is a recorded 2026-09-03
+# BTM victim): `launchctl print gui/<uid>/<label>` (exit 0 = job is known
 # to launchd); if it is missing, `launchctl bootstrap gui/<uid> <plist>`. For
 # each declared daemon, the same against the system domain and
 # /Library/LaunchDaemons (which activation has just synced by this point).
@@ -25,6 +28,19 @@
 # restart anything — the reload-on-change path stays nix-darwin's own. Agent
 # checks enter the user's session the same way nix-darwin does:
 # `launchctl asuser <uid> sudo --user=<user> -- launchctl ...`.
+#
+# Two daemons are deliberately NOT swept: activate-system (RunAtLoad=true —
+# bootstrapping it MID-ACTIVATION re-runs activation fragments and relinks
+# /run/current-system underneath the very switch this hook runs in) and
+# nix-daemon (socket-activated by launchd; if it were truly gone this
+# activation could not be running). Both still show up in btm-check's
+# report when BTM is what took them.
+#
+# Honesty about BTM: `launchctl bootstrap` is exactly the call BTM refuses
+# (error 5), so of the ways a job goes missing this sweep REPAIRS the
+# non-BTM ones (manual bootout, lost gui session, reset login items) and
+# only surfaces the BTM ones — flipping the toggle back is Settings-only,
+# see ./btm-check.nix.
 #
 # This is the activation-time half of the job-gone repair; the runtime half
 # (between switches) lives in net-observer.nix and covers only sing-box —
@@ -42,11 +58,36 @@
 { config, lib, ... }:
 let
   user = config.system.primaryUser;
+  # Labels are interpolated into a ROOT shell and used as plist path
+  # components, and the daemon set now includes labels contributed by
+  # third-party flake inputs (net-observer) — so refuse anything outside a
+  # conservative charset at EVAL time rather than trusting types.str.
+  checkLabel =
+    label:
+    if builtins.match "[A-Za-z0-9._-]+" label != null then
+      label
+    else
+      throw "user-agents.nix: launchd label '${label}' has characters unsafe for the root activation shell";
   # Same rule nix-darwin applies: an explicit serviceConfig.Label wins, else
   # "${launchd.labelPrefix}.<name>" (modules/launchd/default.nix). Read the
   # resolved Label rather than recomputing it so the two can never drift.
-  labels = lib.mapAttrsToList (_: agent: agent.serviceConfig.Label) config.launchd.user.agents;
-  daemonLabels = lib.mapAttrsToList (_: d: d.serviceConfig.Label) config.launchd.daemons;
+  # Home-manager agents analogously (its plist file IS "<Label>.plist").
+  labels =
+    map checkLabel (
+      lib.mapAttrsToList (_: agent: agent.serviceConfig.Label) config.launchd.user.agents
+    )
+    ++ map checkLabel (
+      lib.mapAttrsToList (_: a: a.config.Label) (
+        lib.filterAttrs (_: a: a.enable) (config.home-manager.users.${user}.launchd.agents or { })
+      )
+    );
+  unswept = [
+    "org.nixos.activate-system"
+    "org.nixos.nix-daemon"
+  ];
+  daemonLabels = lib.filter (l: !(builtins.elem l unswept)) (
+    map checkLabel (lib.mapAttrsToList (_: d: d.serviceConfig.Label) config.launchd.daemons)
+  );
   bootstrapOne = label: ''
     if ! launchctl asuser "$uid" sudo --user=${lib.escapeShellArg user} -- \
         launchctl print "gui/$uid/${label}" >/dev/null 2>&1; then

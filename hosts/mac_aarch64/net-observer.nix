@@ -668,7 +668,15 @@ let
         "${singBoxConfigPath}" 2>/dev/null)
       if [ -n "$vips" ]; then
         for hp in $vips; do
-          vls="$vls vless[$hp]=$(probe_tcp "''${hp%:*}" "''${hp##*:}" "$iface")"
+          # Both halves come from a user-writable config file and end up in a
+          # root-run curl argv — refuse anything that isn't a bare IPv4:port
+          # instead of trusting the render pipeline (BADADDR in the column
+          # beats silently probing whatever string landed there).
+          h=''${hp%:*}
+          p=''${hp##*:}
+          case "$h" in "" | *[!0-9.]*) vls="$vls vless[$hp]=BADADDR"; continue ;; esac
+          case "$p" in "" | *[!0-9]*) vls="$vls vless[$hp]=BADADDR"; continue ;; esac
+          vls="$vls vless[$hp]=$(probe_tcp "$h" "$p" "$iface")"
         done
       else
         vls=" vless=skip"
