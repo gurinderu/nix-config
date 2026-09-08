@@ -347,22 +347,9 @@ in
           [ "$age" -ge 0 ] && [ "$age" -lt 20 ] && exit 0
         fi
         start_line=$(/usr/bin/grep -n 'sing-box started' ${logPath} 2>/dev/null | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
-        # Two wedge signatures, not one. "missing default interface" is what
-        # sing-box logs when it KNOWS the interface went away; the stale-bind
-        # wedge (outbound dials still bound to the previous interface after a
-        # transition) logs "connect: network is unreachable" on every dial
-        # instead and sailed straight through the old single-pattern check —
-        # observed 2026-09-08 16:40 on a coworking->hotspot hop: netreload
-        # skipped with "healthy since ...", the tunnel stayed dead ~1.5 min
-        # until sing-box happened to re-bind on its own. The since-start
-        # window is additionally bounded to the last 400 lines so a transient
-        # unreachable-dial from hours ago cannot turn a routine transition
-        # into a needless kickstart (each one is 5-10s of fail-closed
-        # downtime; the whole point of this check).
         if [ -n "$start_line" ] \
           && ! /usr/bin/tail -n +"$start_line" ${logPath} 2>/dev/null \
-               | /usr/bin/tail -n 400 \
-               | /usr/bin/grep -qE 'missing default interface|connect: network is unreachable'; then
+               | /usr/bin/grep -q 'missing default interface'; then
           since=$(/usr/bin/sed -n "''${start_line}p" ${logPath} | /usr/bin/awk '{print $2, $3}')
           /bin/echo "$(/bin/date '+%z %Y-%m-%d %H:%M:%S') INFO netreload: skip kickstart, sing-box healthy since $since" >> ${logPath}
           exit 0
