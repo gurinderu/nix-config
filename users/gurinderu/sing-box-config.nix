@@ -582,85 +582,85 @@ in
           ]
       )
       ++ [
-      { action = "sniff"; }
-      {
-        protocol = "dns";
-        action = "hijack-dns";
-      }
-      {
-        # Tailscale manages its own encrypted transport — send everything the
-        # daemon emits (control plane, DERP, STUN) straight out, never through
-        # vless-out. Must sit above the quic/udp rejects and the fakeip->vless
-        # rule so none of its traffic gets rejected or proxied. The process name
-        # differs per platform (tailscaled on Linux, the macsys network-extension
-        # on macOS), so it is passed in via tailscaleProcs.
-        process_name = tailscaleProcs;
-        outbound = "direct-out";
-      }
-    ]
-    # Platform-specific Tailscale bypasses spliced in here so they keep their
-    # position above the rejects (e.g. a domain_suffix fallback on macOS, where
-    # process matching of the network-extension is unreliable).
-    ++ extraBypassRules
-    ++ [
-      {
-        # Captive-portal probe goes direct: behind a portal the VPN is not up
-        # yet, so the probe must reach the portal (or the real Apple host)
-        # rather than be routed into an unreachable vless-auto.
-        domain = [ "captive.apple.com" ];
-        outbound = "direct-out";
-      }
-      {
-        # Captive-portal LOGIN pages go direct: behind the portal the VPN is not
-        # up, so the browser opening wifi.<portal>/login must reach the portal,
-        # not be routed into an unreachable vless-auto. Matched by the sniffed
-        # SNI/Host; the DNS rule above makes the name resolve to a real IP so this
-        # direct route actually goes somewhere. Must sit above the fakeip->vless
-        # rule. See portalDomains for the list and the escape-hatch note.
-        domain_suffix = portalDomains;
-        outbound = "direct-out";
-      }
-      {
-        protocol = "quic";
-        action = "reject";
-      }
-      {
-        port = 443;
-        network = "udp";
-        action = "reject";
-      }
-      {
-        # Russian sites bypassing the VPN.
-        rule_set = [
-          "geosite-category-ru"
-          "geoip-ru"
-        ];
-        outbound = "direct-out";
-      }
-      {
-        # Fakeip range -> everything else through the VPN. Same binding as
-        # inet4_range above, so the two cannot drift. The range must stay out
-        # of 198.18.0.0/15: that is space macOS itself hands to awdl0, and a
-        # route never wins against a connected interface — the rule would
-        # only be a lie in the config about where that traffic goes. See
-        # ./fakeip-range.nix.
-        ip_cidr = [
-          fakeipRange
-          "fc00::/18"
-        ];
-        outbound = "vless-main";
-      }
-      {
-        # LAN / gateway / captive-portal page goes direct. MUST stay below the
-        # fakeip rule above: the fakeip IPv6 range fc00::/18 is a subset of the
-        # ULA fc00::/7 that ip_is_private matches, so placing this higher would
-        # divert every IPv6 fakeip connection (proxied AAAA domains) to
-        # direct-out and break IPv6 proxying. Real private LAN addresses are not
-        # in the fakeip range, so they fall through to here.
-        ip_is_private = true;
-        outbound = "direct-out";
-      }
-    ];
+        { action = "sniff"; }
+        {
+          protocol = "dns";
+          action = "hijack-dns";
+        }
+        {
+          # Tailscale manages its own encrypted transport — send everything the
+          # daemon emits (control plane, DERP, STUN) straight out, never through
+          # vless-out. Must sit above the quic/udp rejects and the fakeip->vless
+          # rule so none of its traffic gets rejected or proxied. The process name
+          # differs per platform (tailscaled on Linux, the macsys network-extension
+          # on macOS), so it is passed in via tailscaleProcs.
+          process_name = tailscaleProcs;
+          outbound = "direct-out";
+        }
+      ]
+      # Platform-specific Tailscale bypasses spliced in here so they keep their
+      # position above the rejects (e.g. a domain_suffix fallback on macOS, where
+      # process matching of the network-extension is unreliable).
+      ++ extraBypassRules
+      ++ [
+        {
+          # Captive-portal probe goes direct: behind a portal the VPN is not up
+          # yet, so the probe must reach the portal (or the real Apple host)
+          # rather than be routed into an unreachable vless-auto.
+          domain = [ "captive.apple.com" ];
+          outbound = "direct-out";
+        }
+        {
+          # Captive-portal LOGIN pages go direct: behind the portal the VPN is not
+          # up, so the browser opening wifi.<portal>/login must reach the portal,
+          # not be routed into an unreachable vless-auto. Matched by the sniffed
+          # SNI/Host; the DNS rule above makes the name resolve to a real IP so this
+          # direct route actually goes somewhere. Must sit above the fakeip->vless
+          # rule. See portalDomains for the list and the escape-hatch note.
+          domain_suffix = portalDomains;
+          outbound = "direct-out";
+        }
+        {
+          protocol = "quic";
+          action = "reject";
+        }
+        {
+          port = 443;
+          network = "udp";
+          action = "reject";
+        }
+        {
+          # Russian sites bypassing the VPN.
+          rule_set = [
+            "geosite-category-ru"
+            "geoip-ru"
+          ];
+          outbound = "direct-out";
+        }
+        {
+          # Fakeip range -> everything else through the VPN. Same binding as
+          # inet4_range above, so the two cannot drift. The range must stay out
+          # of 198.18.0.0/15: that is space macOS itself hands to awdl0, and a
+          # route never wins against a connected interface — the rule would
+          # only be a lie in the config about where that traffic goes. See
+          # ./fakeip-range.nix.
+          ip_cidr = [
+            fakeipRange
+            "fc00::/18"
+          ];
+          outbound = "vless-main";
+        }
+        {
+          # LAN / gateway / captive-portal page goes direct. MUST stay below the
+          # fakeip rule above: the fakeip IPv6 range fc00::/18 is a subset of the
+          # ULA fc00::/7 that ip_is_private matches, so placing this higher would
+          # divert every IPv6 fakeip connection (proxied AAAA domains) to
+          # direct-out and break IPv6 proxying. Real private LAN addresses are not
+          # in the fakeip range, so they fall through to here.
+          ip_is_private = true;
+          outbound = "direct-out";
+        }
+      ];
     rule_set = [
       {
         type = "remote";

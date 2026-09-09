@@ -145,7 +145,9 @@
       checks.x86_64-linux.mac-system-eval =
         nixpkgs.legacyPackages.x86_64-linux.runCommand "mac-system-eval"
           {
-            macSystemDrv = builtins.unsafeDiscardStringContext self.darwinConfigurations."mac_aarch64".system.drvPath;
+            macSystemDrv =
+              builtins.unsafeDiscardStringContext
+                self.darwinConfigurations."mac_aarch64".system.drvPath;
           }
           ''printf '%s\n' "$macSystemDrv" > $out'';
 
