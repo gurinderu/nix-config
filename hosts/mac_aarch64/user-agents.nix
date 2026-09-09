@@ -73,9 +73,7 @@ let
   # resolved Label rather than recomputing it so the two can never drift.
   # Home-manager agents analogously (its plist file IS "<Label>.plist").
   labels =
-    map checkLabel (
-      lib.mapAttrsToList (_: agent: agent.serviceConfig.Label) config.launchd.user.agents
-    )
+    map checkLabel (lib.mapAttrsToList (_: agent: agent.serviceConfig.Label) config.launchd.user.agents)
     ++ map checkLabel (
       lib.mapAttrsToList (_: a: a.config.Label) (
         lib.filterAttrs (_: a: a.enable) (config.home-manager.users.${user}.launchd.agents or { })
