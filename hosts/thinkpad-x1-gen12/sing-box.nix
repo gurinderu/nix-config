@@ -41,7 +41,23 @@ let
   # launches the new process while the old one still drains TUN connections (and
   # holds the flock), causing the new process to time out on open and crash-loop.
   # Mirrors the lsof-wait loop in the macOS launchd wrapper.
+  #
+  # Then the stale-fakeip cache guard, ported from the darwin start script
+  # (hosts/mac_aarch64/sing-box.nix): cache.db persists fakeip mappings, and
+  # entries from a previous pool survive a pool change — sing-box then keeps
+  # serving addresses the current route rules no longer send to the TUN,
+  # silently blackholing this box's proxied traffic (the pool moved three
+  # times in one week of 2026-09; the mac needed a 13-minute incident to
+  # learn the stamp must reflect the config the process ACTUALLY loads, not
+  # the build-time constant). Reading the range from the sops-rendered file
+  # is safe here precisely because of that lesson — and unlike darwin there
+  # is no rendered-later race to fall back around: sops-nix renders during
+  # activation, before this unit starts, so the darwin fallback-to-build-time
+  # branch is deliberately dropped. An unreadable config yields an empty
+  # $want: the guard skips (never wipes on a guess) and sing-box itself fails
+  # loudly on the same file right after.
   cacheDb = "/var/lib/sing-box/cache.db";
+  renderedConfig = config.sops.templates."sing-box-config.json".path;
   preStart = pkgs.writeShellScript "sing-box-pre-start" ''
     i=0
     while [ -f ${cacheDb} ] && [ "$i" -lt 30 ] \
@@ -49,6 +65,17 @@ let
       sleep 1
       i=$((i + 1))
     done
+
+    stamp=/var/lib/sing-box/fakeip-range
+    want=$(${pkgs.jq}/bin/jq -r 'first(.dns.servers[]? | .inet4_range // empty)' \
+      ${renderedConfig} 2>/dev/null)
+    if [ -n "$want" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
+      if [ -e ${cacheDb} ]; then
+        echo "sing-box: fakeip pool is now $want; dropping cache.db with its stale mappings"
+        rm -f ${cacheDb}
+      fi
+      printf '%s' "$want" > "$stamp"
+    fi
   '';
 in
 {

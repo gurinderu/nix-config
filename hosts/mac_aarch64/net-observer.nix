@@ -34,8 +34,20 @@
 #                                   sing-box (the user-visible path)
 #                  sel=...          which urltest member sing-box has selected
 #                                   (Clash API on 127.0.0.1:9090)
+#                  sel-main=...     the manual kill-switch selector: vless-auto
+#                                   normally, block-out when ALL proxied
+#                                   traffic is deliberately dropped — a
+#                                   forgotten flip persists in cache.db across
+#                                   restarts AND reboots and looks exactly
+#                                   like "tun dead, direct fine" otherwise
 #                  load=...         host load averages 1/5/15 min — the
 #                                   starvation discriminator (see below)
+#                  disk=... swap=.. data-volume used%/available and swap used:
+#                                   the other two resource-exhaustion axes
+#                                   (swap-full 2026-07-24, disk-to-zero
+#                                   2026-09-02..04 broke networksetup with
+#                                   ENOSPC), each previously attributable only
+#                                   by manual archaeology
 #
 # Diagnosis by column: gw=FAIL → local network/Wi-Fi down (infra, not us);
 # gw=OK direct=OK vless=OK tun=000 → sing-box is wedged (stale interface
@@ -136,6 +148,11 @@ let
   logPath = "/var/log/net-observer.log";
   jq = "${pkgs.jq}/bin/jq";
 
+  # Shell case-globs covering the fakeip pool, derived at eval time from the
+  # single source of truth (fakeip-range.nix) — the two match sites below used
+  # to carry hand-maintained copies with "keep in lockstep" comments.
+  fakeipGlobs = (import ../../users/gurinderu/fakeip-range.nix).shellGlobs;
+
   # The domain whose intermittent resolution failures we are hunting, plus a
   # control domain that shares ONLY the .ru/`local` DNS path with it (see the
   # DNS-columns doc above). ya.ru: short, stable, unquestionably in
@@ -164,6 +181,14 @@ let
         case "$l" in
           RTM_IFINFO* | RTM_NEWADDR* | RTM_DELADDR*)
             echo "$(/bin/date '+%F %T') EVT $l"
+            pend=""
+            ;;
+          RTM_GET*)
+            # RTM_GET is a routing-socket QUERY/reply, not a state change —
+            # and 2-3 per tick are this very observer's own `route -n get`
+            # probes, ~12-17k self-noise EVT pairs a day that drowned the
+            # RTM_ADD/DELETE evidence this stream exists for. Drop it
+            # entirely (pend cleared so its sockaddr line can't print).
             pend=""
             ;;
           RTM_*)
@@ -250,9 +275,9 @@ let
       ms=$(printf '%s\n' "$out" | /usr/bin/awk '/Query time:/ { print $4; exit }')
       case "$ip" in
         "") echo EMPTY ;;
-        # Kept in lockstep with users/gurinderu/fakeip-range.nix (172.24.0.0/14 =
-        # 172.24.*-172.27.*): update this glob if that range ever moves.
-        172.2[4-7].*) echo "FAKEIP($ip)" ;;
+        # Globs derived from users/gurinderu/fakeip-range.nix at eval time;
+        # anchored by case semantics (a full-string match on the address).
+        ${builtins.concatStringsSep " | " fakeipGlobs}) echo "FAKEIP($ip)" ;;
         *) echo "OK($ip/''${ms}ms)" ;;
       esac
     }
@@ -635,6 +660,16 @@ let
       tun=$(/usr/bin/curl -m 4 -s -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 2>/dev/null)
       sel=$(/usr/bin/curl -m 2 -s http://127.0.0.1:9090/proxies/vless-auto 2>/dev/null \
         | ${jq} -r '.now // "?"' 2>/dev/null)
+      # The manual kill-switch selector (users/gurinderu/sing-box-config.nix):
+      # "block-out" here means ALL proxied traffic is deliberately dropped, and
+      # the choice persists in cache.db across restarts and reboots — so a
+      # forgotten flip presents as the exact wedge signature (tun dead, direct
+      # fine) indefinitely, on a TICK line that otherwise reads healthy. One
+      # column makes it visible; the watchdog below also declines to kick on
+      # it, since a restart restores the selection from cache.db and cures
+      # nothing.
+      selm=$(/usr/bin/curl -m 2 -s http://127.0.0.1:9090/proxies/vless-main 2>/dev/null \
+        | ${jq} -r '.now // "?"' 2>/dev/null)
 
       # sing-box pid(s): a change between ticks pins a restart (netreload
       # kickstart or crash) on the timeline; two pids = old/new overlap during
@@ -655,6 +690,17 @@ let
       case "$load1" in
         "" | *[!0-9.]*) load1=0 ;;
       esac
+
+      # Disk and swap, the other two resource-exhaustion axes: swap-full
+      # (8.2G, 2026-07-24) and disk-run-to-zero (2026-09-02..04, ENOSPC broke
+      # networksetup itself) each took a manual log-archaeology session to
+      # attribute, same as load did before it became a column. disk= is
+      # used%/available on the data volume, swap= the used figure from
+      # vm.swapusage; "?" on probe failure, mirroring the load fallback above.
+      disk=$(/bin/df -k /System/Volumes/Data 2>/dev/null \
+        | /usr/bin/awk 'NR == 2 { printf "%s/%.0fG", $5, $4 / 1048576 }')
+      swapu=$(/usr/sbin/sysctl -n vm.swapusage 2>/dev/null \
+        | /usr/bin/awk '{ print $6 }')
 
       vls=""
       # server:port PAIRS, not bare IPs. The fleet mixes XTLS-Vision on :443
@@ -690,7 +736,7 @@ let
       site=$(/bin/cat "$dnstmp/site" 2>/dev/null)
       /bin/rm -rf "$dnstmp"
 
-      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--} load=''${load:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
+      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sel-main=''${selm:-?} sb=''${sb:--} load=''${load:-?} disk=''${disk:-?} swap=''${swapu:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
 
       # --- L2/DHCP state, logged only on change (the "before" timeline) ------
       # gateway ARP entry + DHCP router/DNS; NET line only when it differs from
@@ -783,8 +829,9 @@ let
             echo "$ts DNS cache: (empty)"
           fi
           case "$cache" in
-            # Kept in lockstep with users/gurinderu/fakeip-range.nix (172.24.0.0/14).
-            *172.2[4-7].* | *fc00:*)
+            # v4 globs derived from users/gurinderu/fakeip-range.nix at eval
+            # time, unanchored here (matched inside dscacheutil output).
+            ${builtins.concatStringsSep " | " (map (g: "*" + g) fakeipGlobs)} | *fc00:*)
               echo "$ts DNS ALERT poisoned mDNSResponder cache: fakeip for a .ru name"
               ;;
           esac
@@ -842,7 +889,24 @@ let
       fi
       if [ "$wedge_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
         now_s=$(/bin/date +%s)
-        if ! /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
+        if [ "$selm" = "block-out" ]; then
+          # Manual kill-switch engaged: with vless-main on block-out the tun
+          # probe CANNOT return 204 — this is the wedge signature by
+          # construction, not a wedge. A kickstart cures nothing (the
+          # selection is restored from cache.db by the fresh process) and
+          # only tears down the utuns. Checked FIRST, before the load gate:
+          # this state is definitive regardless of load. Exact-match only —
+          # an unreadable selector ("?"/empty, e.g. Clash API down with the
+          # process sick) must fall through to the normal kick path, so a
+          # genuinely wedged sing-box is still restarted. Same flat 5-min
+          # rate limit as the starvation verdict (the branches are mutually
+          # exclusive per tick), and wedge_ticks is deliberately left alone:
+          # the tick after the user flips back, the kick path is live again.
+          if [ $((now_s - last_skip)) -ge 300 ]; then
+            echo "$ts ACT suppressed: tunnel dead $wedge_ticks ticks but vless-main=block-out (manual kill-switch) -> not a wedge; flip back: curl -X PUT http://127.0.0.1:9090/proxies/vless-main -d '{\"name\":\"vless-auto\"}'"
+            last_skip=$now_s
+          fi
+        elif ! /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
           # The starvation verdict keeps its own flat 5-min rate limit,
           # OUTSIDE the escalating backoff: it is a diagnostic (the primary
           # starvation-vs-wedge discriminator this log exists for), not an
