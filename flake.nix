@@ -112,7 +112,30 @@
         pkgs-unstable = mkPkgsUnstable "aarch64-darwin";
       };
 
-      darwinPackages = self.darwinConfigurations."mac_aarch64".pkgs;
+      # NB no `darwinPackages` output here any more: it was a nix-darwin
+      # template leftover with zero consumers whose only observable effect
+      # was a permanent "unknown flake output" warning on every check —
+      # training the reader to skim warnings in a repo whose gate signal is
+      # mostly warning text.
+
+      # Formatting is ENFORCED, not just declared: with only a formatter
+      # output and nothing referencing it from checks, the tree drifted from
+      # its own style for months while `nix flake check` printed green (8
+      # files as of 2026-09-09). The check runs the same nixfmt-tree wrapper
+      # `nix fmt` uses (its treefmt config is embedded in the wrapper — the
+      # reason an in-tree treefmt.toml would be dead configuration) over a
+      # writable copy of the source, in --ci mode (fail on change, no cache).
+      checks.x86_64-linux.formatting =
+        nixpkgs.legacyPackages.x86_64-linux.runCommand "treefmt-check"
+          {
+            nativeBuildInputs = [ self.formatter.x86_64-linux ];
+          }
+          ''
+            cp -r ${self} source
+            chmod -R +w source
+            HOME=$TMPDIR treefmt --ci --tree-root source
+            touch $out
+          '';
 
       # Mechanical eval coverage for the Mac host. `nix flake check` forces
       # system.build.toplevel for nixosConfigurations but has NO darwin
