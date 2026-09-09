@@ -262,6 +262,13 @@ in
         action = "reject";
       }
       {
+        # Mesh/cluster-internal names. The loop question this rule shared with
+        # the other `local` rules is answered — measured 2026-09-09 (see the
+        # tailscale rule below): nks.fluence.nb dug via the pin returned an
+        # upstream NXDOMAIN in 34ms, i.e. `local` forwarded out and answered,
+        # no loop. Whether these names SHOULD resolve to something (a mesh
+        # resolver this vantage point doesn't see) is a separate question this
+        # measurement deliberately does not answer.
         domain_suffix = [
           "cluster.local"
           "fluence.nb"
@@ -318,10 +325,13 @@ in
         # itself (172.19.0.1), so `type: local` looped back into sing-box and
         # every RU lookup died with "i/o timeout" / "no servers could be
         # reached" — which broke all RU domains while fakeip traffic kept
-        # working. (That premise changed: the pin is now a public resolver, and
-        # whether `local` still loops depends on whether it dials over the route
-        # table or interface-bound. UNVERIFIED — recheck before relying on it;
-        # yandex below works either way, so nothing here needs to change yet.) They cannot use the google DoH server either: its dial used
+        # working. (That premise has changed since: the pin is the 192.0.2.53
+        # alias now, and `local` was MEASURED not to loop through it —
+        # 2026-09-09, uncached names dug via the pin through `local`-served
+        # rules came back with upstream answers in ~30ms; details on the
+        # tailscale rule below. yandex here stays regardless: real routable
+        # IPs over plain UDP dialed direct is the property this rule needs,
+        # independent of how `local` behaves.) They cannot use the google DoH server either: its dial used
         # to go DIRECT and RKN-side networks block TCP to 8.8.8.8, which broke
         # every RU lookup again (2026-07-15..17); now that google detours via
         # the proxy, pinning RU DNS to it would make RU resolution die whenever
@@ -336,6 +346,17 @@ in
         # Tailscale control plane / DERP must resolve to REAL IPs (not fakeip)
         # so tailscaled can reach them directly via the bypass route rule below;
         # otherwise `tailscale up` gets a fakeip routed into the proxy and times out.
+        #
+        # `local` MEASURED not looping through the pin (2026-09-09, pin-era
+        # 192.0.2.53): an uncached probe<rnd>.tailscale.com dug via the pin
+        # returned an upstream NXDOMAIN in 35ms (a loop would have run out
+        # the deadline as captive.apple.com's once did, and fakeip cannot say
+        # NXDOMAIN), login.tailscale.com real A records in 26ms — darwin
+        # `local` evidently resolves via the native scoped resolvers, not the
+        # pinned system list. Kept over yandex deliberately: same non-loop
+        # result, and scoped resolution keeps working on networks that force
+        # their own resolver and drop outbound UDP/53 to public servers —
+        # tailscale is the remote-access lifeline, it gets the widest path.
         domain_suffix = [
           "tailscale.com"
           "tailscale.io"

@@ -85,6 +85,10 @@ import ./sing-box-config.nix {
 
   extraDnsRules = [
     {
+      # `local` measured non-looping through the pin on 2026-09-09 (see the
+      # tailscale DNS rule in ./sing-box-config.nix) — the shared premise this
+      # rule leans on. The CNA-specific path itself is only exercisable at a
+      # real captive portal, so it stays measured-by-proxy.
       process_name = [ "Captive Network Assistant" ];
       server = "local";
     }
