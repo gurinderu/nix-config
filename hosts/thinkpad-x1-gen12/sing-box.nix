@@ -66,16 +66,36 @@ let
       i=$((i + 1))
     done
 
+    # NB on first activation the stamp is missing, so an existing cache.db is
+    # wiped once — its pool is unknown, same rationale as the darwin guard.
     stamp=/var/lib/sing-box/fakeip-range
     want=$(${pkgs.jq}/bin/jq -r 'first(.dns.servers[]? | .inet4_range // empty)' \
-      ${renderedConfig} 2>/dev/null)
-    if [ -n "$want" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
+      ${lib.escapeShellArg renderedConfig} 2>/dev/null)
+    if [ -z "$want" ]; then
+      # Readable-but-rangeless config (a future rename of inet4_range) must
+      # be distinguishable from a working guard — darwin logs on the same
+      # condition.
+      echo "sing-box: could not read inet4_range from the rendered config; skipping the stale-fakeip guard this start" >&2
+    elif [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
+      wiped=1
       if [ -e ${cacheDb} ]; then
         echo "sing-box: fakeip pool is now $want; dropping cache.db with its stale mappings"
-        rm -f ${cacheDb}
+        rm -f ${cacheDb} || wiped=0
       fi
-      printf '%s' "$want" > "$stamp"
+      # Stamp only when the wipe happened (or nothing needed wiping): a stamp
+      # over a surviving old-pool cache.db would disarm the guard forever.
+      if [ "$wiped" = 1 ]; then
+        printf '%s' "$want" > "$stamp" \
+          || echo "sing-box: could not write the fakeip stamp; the guard will re-wipe next start" >&2
+      else
+        echo "sing-box: could not remove stale cache.db; NOT stamping $want so the guard retries next start" >&2
+      fi
     fi
+    # The guard is hygiene, never a start blocker: this script is the unit's
+    # ExecStartPre (no "-" prefix), so a non-zero tail here would crash-loop
+    # sing-box on Restart=on-failure — e.g. a failed stamp write on a full
+    # /var would take the proxy down over an optional wipe. Always succeed.
+    exit 0
   '';
 in
 {
@@ -119,7 +139,7 @@ in
   systemd.paths.sing-box-config = {
     wantedBy = [ "multi-user.target" ];
     pathConfig = {
-      PathChanged = config.sops.templates."sing-box-config.json".path;
+      PathChanged = renderedConfig;
       Unit = "sing-box-config-reload.service";
     };
   };
@@ -144,6 +164,13 @@ in
     after = [
       "network-online.target"
       "tailscaled.service"
+      # Rendering happens in activation today (sops.useSystemdActivation is
+      # false), so this entry is a no-op — systemd ignores ordering against a
+      # unit that does not exist. It is here for the day the flag's default
+      # (systemd.sysusers.enable) flips rendering to a sysinit-time unit:
+      # without the ordering, the ExecStartPre guard and sing-box itself
+      # would read a stale or absent rendered config at boot.
+      "sops-install-secrets.service"
     ];
     # wants pulls tailscaled.service into the transaction so After= ordering is
     # honoured even during Restart=on-failure cycles (systemd only re-evaluates
@@ -158,14 +185,17 @@ in
     restartTriggers = [ configJson ];
     serviceConfig = {
       ExecStartPre = "${preStart}";
-      ExecStart = "${pkgs.sing-box}/bin/sing-box run -c ${
-        config.sops.templates."sing-box-config.json".path
-      }";
+      ExecStart = "${pkgs.sing-box}/bin/sing-box run -c ${renderedConfig}";
       Restart = "on-failure";
       RestartSec = 5;
       # Writable state dir for experimental.cache_file (fakeip persistence).
       # Creates /var/lib/sing-box (root-owned, this unit runs as root).
       StateDirectory = "sing-box";
+      # 0700, not the 0755 default: cache.db is a persistent record of every
+      # name resolved through the proxy, and arbitrary GitHub Actions
+      # workflow code runs on this box as local users (github-runner.nix).
+      # The darwin twin of this directory is chmod 700 for the same reason.
+      StateDirectoryMode = "0700";
       # Runs as root (no User=) so auto_route can install routes and open
       # /dev/net/tun; these caps are what the TUN inbound actually needs.
       CapabilityBoundingSet = [
