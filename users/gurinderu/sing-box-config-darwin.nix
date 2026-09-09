@@ -100,13 +100,16 @@ import ./sing-box-config.nix {
       # a fakeip — and the same answer came back even for an explicit
       # `dig @77.88.8.8`, since the DNS listener hijacks those too.)
       #
-      # yandex rather than `local`, which is what the Tailscale rule uses: on
-      # macOS `local` forwards to the system resolver, which is sing-box itself
-      # (networking.dns pins the alias this very config answers on), so it can
-      # loop — that is documented on the captive.apple.com rule, where it timed
-      # out at the 10s deadline. yandex is plain UDP dialed direct off the
-      # physical NIC, so it also keeps working when the proxy is down, which is
-      # the condition under which one is most likely to want the mesh up.
+      # yandex rather than `local` (which the Tailscale rule uses). The
+      # original reason was a loop: in the TUN-pin era `local` forwarded to
+      # the system resolver — sing-box itself — and captive.apple.com timed
+      # out on exactly that. That premise is HISTORICAL now: measured
+      # 2026-09-09 through the 192.0.2.53 pin, `local` resolves via the
+      # native scoped resolvers and does not loop (see the tailscale rule in
+      # ./sing-box-config.nix). yandex stays for the reason that survives
+      # the measurement: plain UDP dialed direct off the physical NIC keeps
+      # answering with a REAL routable IP even while the proxy is down —
+      # the condition under which one most wants the mesh up.
       # Control-plane host only — the dashboard must keep getting a fakeip so
       # it goes through the proxy. This real IP exists for the daemon's
       # process_name bypass; see the note where that route rule used to be.

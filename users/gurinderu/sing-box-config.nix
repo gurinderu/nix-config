@@ -263,12 +263,13 @@ in
       }
       {
         # Mesh/cluster-internal names. The loop question this rule shared with
-        # the other `local` rules is answered — measured 2026-09-09 (see the
-        # tailscale rule below): nks.fluence.nb dug via the pin returned an
-        # upstream NXDOMAIN in 34ms, i.e. `local` forwarded out and answered,
-        # no loop. Whether these names SHOULD resolve to something (a mesh
-        # resolver this vantage point doesn't see) is a separate question this
-        # measurement deliberately does not answer.
+        # the other `local` rules is answered for darwin — measured 2026-09-09
+        # on the Mac (see the tailscale rule below): nks.fluence.nb dug via
+        # the pin returned an upstream NXDOMAIN in 34ms, i.e. `local`
+        # forwarded out and answered, no loop (the Linux host has no pin to
+        # loop through). Whether these names SHOULD resolve to something (a
+        # mesh resolver this vantage point doesn't see) is a separate
+        # question this measurement deliberately does not answer.
         domain_suffix = [
           "cluster.local"
           "fluence.nb"
@@ -326,12 +327,14 @@ in
         # every RU lookup died with "i/o timeout" / "no servers could be
         # reached" — which broke all RU domains while fakeip traffic kept
         # working. (That premise has changed since: the pin is the 192.0.2.53
-        # alias now, and `local` was MEASURED not to loop through it —
-        # 2026-09-09, uncached names dug via the pin through `local`-served
-        # rules came back with upstream answers in ~30ms; details on the
-        # tailscale rule below. yandex here stays regardless: real routable
-        # IPs over plain UDP dialed direct is the property this rule needs,
-        # independent of how `local` behaves.) They cannot use the google DoH server either: its dial used
+        # alias now, and darwin `local` was MEASURED not to loop through it —
+        # 2026-09-09, on the Mac, uncached names dug via the pin through
+        # `local`-served rules came back with upstream answers in ~30ms;
+        # details on the tailscale rule below. The measurement is
+        # darwin-only, and moot on the Linux host: dnsListen is null there,
+        # no pin exists to loop through. yandex here stays regardless: real
+        # routable IPs over plain UDP dialed direct is the property this
+        # rule needs, independent of how `local` behaves.) They cannot use the google DoH server either: its dial used
         # to go DIRECT and RKN-side networks block TCP to 8.8.8.8, which broke
         # every RU lookup again (2026-07-15..17); now that google detours via
         # the proxy, pinning RU DNS to it would make RU resolution die whenever
@@ -542,8 +545,11 @@ in
       #
       # The choice PERSISTS: cache_file stores selector state, so block-out
       # survives kickstarts, crashes and reboots — the one thing that clears
-      # it is the stale-pool cache.db wipe in hosts/mac_aarch64/sing-box.nix
-      # (a fakeip-range change), which resets this selector to its default.
+      # it is a stale-pool cache.db wipe (a fakeip-range change; both hosts
+      # carry that guard: hosts/mac_aarch64/sing-box.nix and
+      # hosts/thinkpad-x1-gen12/sing-box.nix), which resets this selector to
+      # its default. Moot on the thinkpad today only because clashApi is off
+      # there, so nothing can flip its selector in the first place.
       # A forgotten flip therefore presents as "tun dead, direct fine"
       # indefinitely; net-observer carries sel-main= in TICK for exactly this,
       # and its watchdog declines to kick while block-out is selected (a
