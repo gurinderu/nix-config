@@ -166,6 +166,14 @@ let
             echo "$(/bin/date '+%F %T') EVT $l"
             pend=""
             ;;
+          RTM_GET*)
+            # RTM_GET is a routing-socket QUERY/reply, not a state change —
+            # and 2-3 per tick are this very observer's own `route -n get`
+            # probes, ~12-17k self-noise EVT pairs a day that drowned the
+            # RTM_ADD/DELETE evidence this stream exists for. Drop it
+            # entirely (pend cleared so its sockaddr line can't print).
+            pend=""
+            ;;
           RTM_*)
             pend="$l"
             ;;
