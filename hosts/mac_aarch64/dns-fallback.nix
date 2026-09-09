@@ -18,8 +18,9 @@
 # /nix/store paths anywhere in ProgramArguments.
 #
 # Design: a stateless reconciler, NOT a marker-based toggle. Each 30s tick it
-# reads the ACTUAL system DNS (networksetup -getdnsservers) and drives it to
-# the state the current TUN reality demands:
+# reads the ACTUAL DNS of every managed service (networksetup -getdnsservers,
+# each service judged on its own reading) and drives it to the state the
+# current TUN reality demands:
 #   - TUN address present  -> DNS must equal the pin. If it does
 #     not, re-pin. This self-heals the post-reboot fail-open case: an earlier
 #     fallback that got baked into SystemConfiguration is corrected the moment
@@ -137,30 +138,36 @@ let
       done
     }
 
-    # Current DNS of the first managed service, normalized to a space-joined
-    # line (the pin, or "8.8.8.8 1.1.1.1"). set_dns always writes every
-    # service together, so the first is representative. The "There aren't any
-    # DNS Servers set on X." message when unset never equals a wanted value.
-    # Non-zero exit means no managed service exists at all, so the caller can
-    # skip the tick instead of reconciling against an empty reading.
-    current_dns() {
-      svc=$(live_services | /usr/bin/head -1)
-      [ -n "$svc" ] || return 1
-      /usr/sbin/networksetup -getdnsservers "$svc" \
+    # Current DNS of ONE managed service, normalized to a space-joined line
+    # (the pin, or "8.8.8.8 1.1.1.1"). The "There aren't any DNS Servers set
+    # on X." message when unset never equals a wanted value.
+    service_dns() {
+      /usr/sbin/networksetup -getdnsservers "$1" 2>/dev/null \
         | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ *$//'
     }
 
-    # Apply DNS to every managed service. Touch FLIP first so sing-box-netreload
-    # skips the kickstart it would otherwise do in response to the resolv.conf
-    # rewrite we are about to cause. $1 is intentionally unquoted so a
-    # multi-server value word-splits into separate networksetup arguments.
-    # Absent services are skipped (see live_services). The read loop is a
-    # pipeline subshell, which is fine here: it only performs side effects and
-    # keeps no state the caller needs, while $1 is inherited as usual.
-    set_dns() {
-      /usr/bin/touch "$FLIP"
-      live_services | while IFS= read -r svc; do
+    # Drive every service in $LIVE to the wanted DNS ($1), each judged by its
+    # OWN current reading. The earlier single-reading version treated the
+    # first service as representative of all and wrote all-or-nothing, which
+    # had a hole: a service catching up later with a different setting — a
+    # USB dongle on its first attach, a re-created service, a hand-reset one
+    # — comes up on DHCP DNS and can become primary, a silent sing-box bypass
+    # (with RKN-poisoned answers on this network) that a matching first
+    # service hid indefinitely. Per-service compare closes it, and only
+    # mismatched services are written, so a healthy tick performs no writes.
+    # FLIP is touched before each write so sing-box-netreload skips the
+    # kickstart it would otherwise do in response to the resolv.conf rewrite
+    # the write causes. $1 is intentionally unquoted at the networksetup call
+    # so a multi-server value word-splits into separate arguments. $2 labels
+    # the log line with the branch's reason. The read loop is a pipeline
+    # subshell, which is fine here: it only performs side effects.
+    reconcile_dns() {
+      printf '%s\n' "$LIVE" | while IFS= read -r svc; do
+        cur=$(service_dns "$svc")
+        [ "$cur" = "$1" ] && continue
+        /usr/bin/touch "$FLIP"
         /usr/sbin/networksetup -setdnsservers "$svc" $1
+        log "$2, DNS on '$svc' was '$cur' - set to $1"
       done
     }
 
@@ -196,23 +203,20 @@ let
       fi
       # No managed service exists at all right now (Wi-Fi hardware off and no
       # dongle attached). There is nothing to reconcile, and MISS must not
-      # advance on a reading we were unable to take — otherwise the fallback
+      # advance on a tick we were unable to read — otherwise the fallback
       # would "engage" against a machine that has no interface to set it on.
-      if ! CUR=$(current_dns); then
+      LIVE=$(live_services)
+      if [ -z "$LIVE" ]; then
         /bin/sleep 30
         continue
       fi
       if /sbin/ifconfig | /usr/bin/grep -q 'inet ${tunAddressRe} '; then
         MISS=0
-        if [ "$CUR" != "$WANT_PIN" ]; then
-          set_dns "$WANT_PIN"
-          log "TUN present, DNS was '$CUR' - re-pinned to $WANT_PIN"
-        fi
+        reconcile_dns "$WANT_PIN" "TUN present, re-pinning"
       else
         MISS=$((MISS + 1))
-        if [ "$MISS" -ge 4 ] && [ "$CUR" != "$WANT_FALLBACK" ]; then
-          set_dns "$WANT_FALLBACK"
-          log "TUN absent for $MISS checks, DNS was '$CUR' - fallback $WANT_FALLBACK engaged"
+        if [ "$MISS" -ge 4 ]; then
+          reconcile_dns "$WANT_FALLBACK" "TUN absent for $MISS checks, engaging fallback"
         fi
       fi
 
