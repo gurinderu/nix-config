@@ -72,7 +72,7 @@ let
   # hence a file of its own — see ./fakeip-range.nix for why it is out of
   # 198.18.0.0/15 entirely (that whole block, not just its lower half, is
   # macOS's own address pool for awdl0).
-  fakeipRange = import ./fakeip-range.nix;
+  fakeipRange = (import ./fakeip-range.nix).range;
 
   # Captive-portal LOGIN domains — the public host a hotspot's login page lives
   # on (NOT the OS probe host captive.apple.com, handled separately below). These

@@ -148,6 +148,11 @@ let
   logPath = "/var/log/net-observer.log";
   jq = "${pkgs.jq}/bin/jq";
 
+  # Shell case-globs covering the fakeip pool, derived at eval time from the
+  # single source of truth (fakeip-range.nix) — the two match sites below used
+  # to carry hand-maintained copies with "keep in lockstep" comments.
+  fakeipGlobs = (import ../../users/gurinderu/fakeip-range.nix).shellGlobs;
+
   # The domain whose intermittent resolution failures we are hunting, plus a
   # control domain that shares ONLY the .ru/`local` DNS path with it (see the
   # DNS-columns doc above). ya.ru: short, stable, unquestionably in
@@ -270,9 +275,9 @@ let
       ms=$(printf '%s\n' "$out" | /usr/bin/awk '/Query time:/ { print $4; exit }')
       case "$ip" in
         "") echo EMPTY ;;
-        # Kept in lockstep with users/gurinderu/fakeip-range.nix (172.24.0.0/14 =
-        # 172.24.*-172.27.*): update this glob if that range ever moves.
-        172.2[4-7].*) echo "FAKEIP($ip)" ;;
+        # Globs derived from users/gurinderu/fakeip-range.nix at eval time;
+        # anchored by case semantics (a full-string match on the address).
+        ${builtins.concatStringsSep " | " fakeipGlobs}) echo "FAKEIP($ip)" ;;
         *) echo "OK($ip/''${ms}ms)" ;;
       esac
     }
@@ -824,8 +829,9 @@ let
             echo "$ts DNS cache: (empty)"
           fi
           case "$cache" in
-            # Kept in lockstep with users/gurinderu/fakeip-range.nix (172.24.0.0/14).
-            *172.2[4-7].* | *fc00:*)
+            # v4 globs derived from users/gurinderu/fakeip-range.nix at eval
+            # time, unanchored here (matched inside dscacheutil output).
+            ${builtins.concatStringsSep " | " (map (g: "*" + g) fakeipGlobs)} | *fc00:*)
               echo "$ts DNS ALERT poisoned mDNSResponder cache: fakeip for a .ru name"
               ;;
           esac
