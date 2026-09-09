@@ -96,6 +96,28 @@ nix-darwin.lib.darwinSystem {
       };
       homebrew = {
         enable = true;
+        brews = [
+          # Apple Containerization CLI (macOS 26+, Apple Silicon). Each
+          # container gets its own lightweight Linux VM that lives only while
+          # the container runs, so an idle host pays nothing — unlike Colima's
+          # always-on VM reserving 4 CPU / 8 GB. Not in nixpkgs; formula only.
+          #
+          # The brew build is here ONLY as socktainer's declared dependency and
+          # is `brew unlink`ed: socktainer 1.2.1 is compiled against container
+          # 1.2.0 exactly (XPC API), while the tap ships 1.3.1 — with 1.3.1 the
+          # docker API "works" but socktainer never learns container IPs, so
+          # compose inter-service DNS returns NXDOMAIN (observed 2026-09-08).
+          # The version in use is Apple's signed installer pkg for 1.2.0 in
+          # /usr/local/bin (outside brew/nix on purpose). Re-evaluate when
+          # socktainer pins >= 1.3 (its master pinned 1.2.2 on 2026-09-08).
+          "container"
+          # Docker Engine API (v1.51, partial) over Apple container. Registers
+          # a `socktainer` docker context, so the nix-provided docker and
+          # docker-compose clients talk to it: `docker context use socktainer`.
+          # Preview: no pause/commit/top, network connect is a no-op, no static
+          # IPs. Colima stays installed as the fallback for those cases.
+          "socktainer"
+        ];
         casks = [
           # Menu bar manager — hides/collapses status icons so they stop
           # disappearing behind the notch. Free Bartender alternative.
@@ -113,15 +135,14 @@ nix-darwin.lib.darwinSystem {
           # with `apply2files: Permission denied`. Keep it off and update taps
           # with `nix flake update homebrew-core homebrew-cask homebrew-bundle`.
           autoUpdate = false;
-          # No brew packages are declared here (the rendered Brewfile is empty),
-          # so cleanup="zap" had nothing legitimate to remove — it only tried to
-          # untap homebrew/cask + homebrew/bundle, which nix-homebrew manages.
-          # Homebrew 6.0 started prompting "proceed with cleanup? [y/n]" before
-          # doing so, and during activation stdin is not a TTY, so the rebuild
-          # hung looping on "Invalid input". Nothing to clean here -> disable it.
-          # (If brew packages are ever managed here and hand-installed ones
-          # should be removed, switch to "zap" AND declare the taps in
-          # homebrew.taps so cleanup leaves nix-homebrew's taps alone.)
+          # cleanup="zap" tried to untap homebrew/cask + homebrew/bundle, which
+          # nix-homebrew manages. Homebrew 6.0 started prompting "proceed with
+          # cleanup? [y/n]" before doing so, and during activation stdin is not
+          # a TTY, so the rebuild hung looping on "Invalid input". Hand-installed
+          # brews (colima, socktainer's deps, …) are tolerated on purpose.
+          # (If hand-installed packages should ever be removed, switch to "zap"
+          # AND declare the taps in homebrew.taps so cleanup leaves
+          # nix-homebrew's taps alone.)
           cleanup = "none";
           # Keep `darwin-rebuild switch` independent of Homebrew's network. With
           # upgrade=true every switch runs `brew upgrade`, which hits the network
