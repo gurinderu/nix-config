@@ -50,7 +50,9 @@
 #                                   by manual archaeology
 #
 # Diagnosis by column: gw=FAIL → local network/Wi-Fi down (infra, not us);
-# gw=OK direct=OK vless=OK tun=000 → sing-box is wedged (stale interface
+# gw=OK direct=OK vless=OK tun=000 → FIRST check sel-main: block-out there
+# means the manual kill-switch is engaged, not a fault (flip it back, done);
+# with sel-main=vless-auto it is sing-box wedged (stale interface
 # monitor or stuck urltest — restart it); vless=FAIL with the rest OK → that
 # proxy server is dead/blocked from this path; tun=000 with load in the tens
 # (2026-07-24: ~31 on 8 cores, swap full) → host starvation of the userspace
@@ -72,6 +74,10 @@
 #                dead tunnel is a 4s probe losing to the run queue, not a
 #                wedge, and restarting only tears down live flows (see the
 #                gate below for the 2026-07-27 nine-hour restart loop).
+#                Same again for sel-main=block-out: the manual kill-switch
+#                makes the wedge signature by construction, the selection
+#                persists in cache.db across restarts, so a kick cures
+#                nothing — suppressed and logged with the flip-back command.
 #                Backoff: starts at one kickstart per 5 min and doubles for
 #                every kick that is not followed by a healthy tun probe
 #                (5/10/20/40/60 min, reset on the first 204) — a kick that
@@ -84,7 +90,8 @@
 #                ticks → bootstrap it back from the current generation's
 #                plist, and if THAT fails, log + notify the console user
 #                (BTM needs a human in System Settings).
-#                Kill switch without a rebuild (covers both paths):
+#                Watchdog off-switch without a rebuild, covers both paths
+#                (unrelated to the vless-main kill-switch above):
 #                  touch /var/lib/net-observer/watchdog-off
 #
 # Request drop-box — /var/lib/net-observer/requests/, sticky-world-writable so
@@ -532,6 +539,10 @@ let
     prev_snap=""
     wedge_ticks=0
     last_skip=0
+    # Which suppression verdict last printed (starve/blockout): a class
+    # change bypasses the 5-min rate limit so the first line of a new
+    # verdict is never swallowed by the previous one's timer.
+    last_skip_class=""
     job_gone_ticks=0
     last_bootstrap=0
     last_btm_notify=0
@@ -682,10 +693,12 @@ let
       # the 2026-07-24 incident wave to this; now it's one column.
       load=$(/usr/sbin/sysctl -n vm.loadavg 2>/dev/null \
         | /usr/bin/awk '{ print $2 "/" $3 "/" $4 }')
-      # 1-minute figure on its own: the watchdog gates on it below. If sysctl
-      # ever fails the field is empty or "?", which would make the awk gate a
-      # syntax error and silently disable the watchdog for good — fall back to
-      # 0 instead so an unreadable load means "kick", the pre-gate behaviour.
+      # 1-minute figure on its own: the watchdog gates on it below. The gate
+      # passes it via awk -v (data, not program text), so a malformed value
+      # coerces to 0 there rather than syntax-erroring the gate; this
+      # sanitizer stays as the first line of defense so the TICK column and
+      # the gate agree on what an unreadable load means — 0, i.e. "kick",
+      # the pre-gate behaviour.
       load1=''${load%%/*}
       case "$load1" in
         "" | *[!0-9.]*) load1=0 ;;
@@ -904,13 +917,18 @@ let
           # process sick) must fall through to the normal kick path, so a
           # genuinely wedged sing-box is still restarted. Same flat 5-min
           # rate limit as the starvation verdict (the branches are mutually
-          # exclusive per tick), and wedge_ticks is deliberately left alone:
-          # the tick after the user flips back, the kick path is live again.
-          if [ $((now_s - last_skip)) -ge 300 ]; then
+          # exclusive per tick), but a CHANGE of suppression class always
+          # prints immediately — otherwise flipping the kill-switch right
+          # after a starvation verdict would swallow the first block-out
+          # line for up to 5 minutes. wedge_ticks is deliberately left
+          # alone: the tick after the user flips back, the kick path is
+          # live again.
+          if [ "$last_skip_class" != blockout ] || [ $((now_s - last_skip)) -ge 300 ]; then
             echo "$ts ACT suppressed: tunnel dead $wedge_ticks ticks but vless-main=block-out (manual kill-switch) -> not a wedge; flip back: curl -X PUT http://127.0.0.1:9090/proxies/vless-main -d '{\"name\":\"vless-auto\"}'"
             last_skip=$now_s
+            last_skip_class=blockout
           fi
-        elif ! /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
+        elif ! /usr/bin/awk -v l="$load1" 'BEGIN { exit !(l + 0 < 16) }' 2>/dev/null; then
           # The starvation verdict keeps its own flat 5-min rate limit,
           # OUTSIDE the escalating backoff: it is a diagnostic (the primary
           # starvation-vs-wedge discriminator this log exists for), not an
@@ -918,9 +936,10 @@ let
           # earlier kicks ratcheted the backoff. Deliberately leaves
           # last_kick and wedge_ticks alone: the moment load drops the next
           # tick kicks immediately, with no backoff to wait out.
-          if [ $((now_s - last_skip)) -ge 300 ]; then
+          if [ "$last_skip_class" != starve ] || [ $((now_s - last_skip)) -ge 300 ]; then
             echo "$ts ACT suppressed: tunnel dead $wedge_ticks ticks but load1=$load1 -> host starvation, restart would not cure it"
             last_skip=$now_s
+            last_skip_class=starve
           fi
         else
           shift_n=$kick_streak
