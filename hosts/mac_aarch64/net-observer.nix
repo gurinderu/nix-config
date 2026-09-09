@@ -34,6 +34,12 @@
 #                                   sing-box (the user-visible path)
 #                  sel=...          which urltest member sing-box has selected
 #                                   (Clash API on 127.0.0.1:9090)
+#                  sel-main=...     the manual kill-switch selector: vless-auto
+#                                   normally, block-out when ALL proxied
+#                                   traffic is deliberately dropped — a
+#                                   forgotten flip persists in cache.db across
+#                                   restarts AND reboots and looks exactly
+#                                   like "tun dead, direct fine" otherwise
 #                  load=...         host load averages 1/5/15 min — the
 #                                   starvation discriminator (see below)
 #                  disk=... swap=.. data-volume used%/available and swap used:
@@ -649,6 +655,16 @@ let
       tun=$(/usr/bin/curl -m 4 -s -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 2>/dev/null)
       sel=$(/usr/bin/curl -m 2 -s http://127.0.0.1:9090/proxies/vless-auto 2>/dev/null \
         | ${jq} -r '.now // "?"' 2>/dev/null)
+      # The manual kill-switch selector (users/gurinderu/sing-box-config.nix):
+      # "block-out" here means ALL proxied traffic is deliberately dropped, and
+      # the choice persists in cache.db across restarts and reboots — so a
+      # forgotten flip presents as the exact wedge signature (tun dead, direct
+      # fine) indefinitely, on a TICK line that otherwise reads healthy. One
+      # column makes it visible; the watchdog below also declines to kick on
+      # it, since a restart restores the selection from cache.db and cures
+      # nothing.
+      selm=$(/usr/bin/curl -m 2 -s http://127.0.0.1:9090/proxies/vless-main 2>/dev/null \
+        | ${jq} -r '.now // "?"' 2>/dev/null)
 
       # sing-box pid(s): a change between ticks pins a restart (netreload
       # kickstart or crash) on the timeline; two pids = old/new overlap during
@@ -715,7 +731,7 @@ let
       site=$(/bin/cat "$dnstmp/site" 2>/dev/null)
       /bin/rm -rf "$dnstmp"
 
-      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--} load=''${load:-?} disk=''${disk:-?} swap=''${swapu:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
+      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sel-main=''${selm:-?} sb=''${sb:--} load=''${load:-?} disk=''${disk:-?} swap=''${swapu:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
 
       # --- L2/DHCP state, logged only on change (the "before" timeline) ------
       # gateway ARP entry + DHCP router/DNS; NET line only when it differs from
@@ -867,7 +883,24 @@ let
       fi
       if [ "$wedge_ticks" -ge 3 ] && [ ! -f /var/lib/net-observer/watchdog-off ]; then
         now_s=$(/bin/date +%s)
-        if ! /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
+        if [ "$selm" = "block-out" ]; then
+          # Manual kill-switch engaged: with vless-main on block-out the tun
+          # probe CANNOT return 204 — this is the wedge signature by
+          # construction, not a wedge. A kickstart cures nothing (the
+          # selection is restored from cache.db by the fresh process) and
+          # only tears down the utuns. Checked FIRST, before the load gate:
+          # this state is definitive regardless of load. Exact-match only —
+          # an unreadable selector ("?"/empty, e.g. Clash API down with the
+          # process sick) must fall through to the normal kick path, so a
+          # genuinely wedged sing-box is still restarted. Same flat 5-min
+          # rate limit as the starvation verdict (the branches are mutually
+          # exclusive per tick), and wedge_ticks is deliberately left alone:
+          # the tick after the user flips back, the kick path is live again.
+          if [ $((now_s - last_skip)) -ge 300 ]; then
+            echo "$ts ACT suppressed: tunnel dead $wedge_ticks ticks but vless-main=block-out (manual kill-switch) -> not a wedge; flip back: curl -X PUT http://127.0.0.1:9090/proxies/vless-main -d '{\"name\":\"vless-auto\"}'"
+            last_skip=$now_s
+          fi
+        elif ! /usr/bin/awk "BEGIN { exit !($load1 < 16) }" 2>/dev/null; then
           # The starvation verdict keeps its own flat 5-min rate limit,
           # OUTSIDE the escalating backoff: it is a diagnostic (the primary
           # starvation-vs-wedge discriminator this log exists for), not an
