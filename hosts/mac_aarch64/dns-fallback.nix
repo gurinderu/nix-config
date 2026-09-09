@@ -67,8 +67,9 @@
 # Coupling with sing-box-netreload: flipping DNS makes configd rewrite
 # resolv.conf, which is sing-box-netreload's WatchPaths trigger. Left alone
 # that would kickstart (kill+relaunch) the very sing-box we just recovered on
-# the re-pin. set_dns() touches a flip flag that netreload honours (skips its
-# kickstart if the flag is fresh) — see hosts/mac_aarch64/sing-box.nix.
+# the re-pin. reconcile_dns() touches a flip flag before each write that
+# netreload honours (skips its kickstart if the flag is fresh) — see
+# hosts/mac_aarch64/sing-box.nix.
 #
 # Manual override: `touch /var/run/dns-fallback.disabled` makes the daemon
 # idle (it stops reconciling), so a repair session can hand-set DNS without
@@ -84,6 +85,9 @@
 let
   # Single source of truth: the pin set in configuration.nix.
   wantDns = lib.head config.networking.dns;
+  # Dots escaped for the ifconfig alias check in ensure_pin_alias, same
+  # convention as tunAddressRe below.
+  wantDnsRe = lib.replaceStrings [ "." ] [ "\\." ] wantDns;
   # The fakeip pool, for the AWDL collision guard in the loop below. The guard
   # tests membership with the derived shell globs, NOT an external interpreter:
   # this daemon must keep working with /nix gone, and /usr/bin/python3 (the
@@ -111,7 +115,7 @@ let
     WANT_PIN="${wantDns}"
     WANT_FALLBACK="${fallbackDns}"
 
-    log() { echo "$(/bin/date '+%F %T') $1"; }
+    log() { printf '%s %s\n' "$(/bin/date '+%F %T')" "$1"; }
 
     # The managed services macOS currently recognizes, one per line.
     #
@@ -119,7 +123,7 @@ let
     # unplug the USB Ethernet dongle and "USB 10/100/1000 LAN" is gone, so every
     # networksetup call naming it fails with "is not a recognized network
     # service" + "** Error: The parameters were not valid." That is two lines of
-    # noise per absent service per set_dns, which drowned the real log and hid
+    # noise per absent service per write pass, which drowned the real log and hid
     # genuine failures (observed 2026-07-24).
     #
     # Recomputed on each call rather than once at startup: this daemon runs
@@ -140,10 +144,48 @@ let
 
     # Current DNS of ONE managed service, normalized to a space-joined line
     # (the pin, or "8.8.8.8 1.1.1.1"). The "There aren't any DNS Servers set
-    # on X." message when unset never equals a wanted value.
+    # on X." message when unset never equals a wanted value. Non-zero exit
+    # when the reading itself failed (networksetup errored) — the caller must
+    # skip such a service, never reconcile against a reading that did not
+    # happen (an empty read would otherwise count as a mismatch and trigger
+    # a write; concrete on this box: ENOSPC broke networksetup 2026-09-02..04).
     service_dns() {
-      /usr/sbin/networksetup -getdnsservers "$1" 2>/dev/null \
-        | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ *$//'
+      out=$(/usr/sbin/networksetup -getdnsservers "$1" 2>/dev/null) || return 1
+      printf '%s\n' "$out" | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ *$//'
+    }
+
+    # A service's device name ("Wi-Fi" -> en0), same -listnetworkserviceorder
+    # parse as the alias loop in sing-box's start script (./sing-box.nix).
+    service_device() {
+      /usr/sbin/networksetup -listnetworkserviceorder 2>/dev/null \
+        | /usr/bin/grep -A1 "^([0-9]*) $1\$" \
+        | /usr/bin/sed -n 's/.*Device: \([^)]*\)).*/\1/p'
+    }
+
+    # The pin's invariant (users/gurinderu/dns-pin.nix): a scoped query to the
+    # pin address is deliverable only on an interface that OWNS the address as
+    # an alias. The alias is normally installed by sing-box's start script,
+    # which resolves devices at that one moment — so a service catching up
+    # LATER (USB dongle on first attach, a re-created service: exactly the
+    # population reconcile_dns exists for) has no alias, and pinning its DNS
+    # without one would kill its scoped lookups outright, a worse hole than
+    # the DHCP bypass being fixed. So the alias is a reconciled PRECONDITION
+    # of a pin write: verify it, install it if missing (same keyword-netmask
+    # ifconfig idiom as the start script), and refuse the write when it
+    # cannot be ensured — a loud unpinned service beats a silently dead one.
+    ensure_pin_alias() {
+      dev=$(service_device "$1")
+      if [ -z "$dev" ]; then
+        log "WARNING: no device for '$1' - not pinning (cannot verify the ${wantDns} alias)"
+        return 1
+      fi
+      /sbin/ifconfig "$dev" 2>/dev/null | /usr/bin/grep -q 'inet ${wantDnsRe} ' && return 0
+      if /sbin/ifconfig "$dev" alias ${wantDns} netmask 255.255.255.255 2>/dev/null; then
+        log "installed pin alias ${wantDns} on $dev ('$1')"
+        return 0
+      fi
+      log "WARNING: could not install pin alias ${wantDns} on $dev ('$1') - not pinning (scoped DNS would go dark)"
+      return 1
     }
 
     # Drive every service in $LIVE to the wanted DNS ($1), each judged by its
@@ -155,19 +197,32 @@ let
     # (with RKN-poisoned answers on this network) that a matching first
     # service hid indefinitely. Per-service compare closes it, and only
     # mismatched services are written, so a healthy tick performs no writes.
+    # An UNREADABLE service is skipped, never written: a failed read must not
+    # count as a mismatch. A pin write additionally requires the alias
+    # precondition (ensure_pin_alias above); the fallback target is a public
+    # resolver, reachable from any interface, so it has no such precondition.
     # FLIP is touched before each write so sing-box-netreload skips the
     # kickstart it would otherwise do in response to the resolv.conf rewrite
     # the write causes. $1 is intentionally unquoted at the networksetup call
     # so a multi-server value word-splits into separate arguments. $2 labels
     # the log line with the branch's reason. The read loop is a pipeline
-    # subshell, which is fine here: it only performs side effects.
+    # subshell, which is fine here: it only performs side effects. A failed
+    # write logs FAILED — this log is what a /nix-dead repair session reads,
+    # and a confident "set to" line over a rejected write would misreport the
+    # one state that matters then.
     reconcile_dns() {
       printf '%s\n' "$LIVE" | while IFS= read -r svc; do
-        cur=$(service_dns "$svc")
+        cur=$(service_dns "$svc") || continue
         [ "$cur" = "$1" ] && continue
+        if [ "$1" = "$WANT_PIN" ]; then
+          ensure_pin_alias "$svc" || continue
+        fi
         /usr/bin/touch "$FLIP"
-        /usr/sbin/networksetup -setdnsservers "$svc" $1
-        log "$2, DNS on '$svc' was '$cur' - set to $1"
+        if /usr/sbin/networksetup -setdnsservers "$svc" $1; then
+          log "$2, DNS on '$svc' was '$cur' - set to $1"
+        else
+          log "$2, DNS on '$svc' was '$cur' - FAILED to set $1"
+        fi
       done
     }
 
