@@ -36,6 +36,12 @@
 #                                   (Clash API on 127.0.0.1:9090)
 #                  load=...         host load averages 1/5/15 min — the
 #                                   starvation discriminator (see below)
+#                  disk=... swap=.. data-volume used%/available and swap used:
+#                                   the other two resource-exhaustion axes
+#                                   (swap-full 2026-07-24, disk-to-zero
+#                                   2026-09-02..04 broke networksetup with
+#                                   ENOSPC), each previously attributable only
+#                                   by manual archaeology
 #
 # Diagnosis by column: gw=FAIL → local network/Wi-Fi down (infra, not us);
 # gw=OK direct=OK vless=OK tun=000 → sing-box is wedged (stale interface
@@ -664,6 +670,17 @@ let
         "" | *[!0-9.]*) load1=0 ;;
       esac
 
+      # Disk and swap, the other two resource-exhaustion axes: swap-full
+      # (8.2G, 2026-07-24) and disk-run-to-zero (2026-09-02..04, ENOSPC broke
+      # networksetup itself) each took a manual log-archaeology session to
+      # attribute, same as load did before it became a column. disk= is
+      # used%/available on the data volume, swap= the used figure from
+      # vm.swapusage; "?" on probe failure, mirroring the load fallback above.
+      disk=$(/bin/df -k /System/Volumes/Data 2>/dev/null \
+        | /usr/bin/awk 'NR == 2 { printf "%s/%.0fG", $5, $4 / 1048576 }')
+      swapu=$(/usr/sbin/sysctl -n vm.swapusage 2>/dev/null \
+        | /usr/bin/awk '{ print $6 }')
+
       vls=""
       # server:port PAIRS, not bare IPs. The fleet mixes XTLS-Vision on :443
       # with Reality-over-gRPC on other ports, and IPs are SHARED between
@@ -698,7 +715,7 @@ let
       site=$(/bin/cat "$dnstmp/site" 2>/dev/null)
       /bin/rm -rf "$dnstmp"
 
-      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--} load=''${load:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
+      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sb=''${sb:--} load=''${load:-?} disk=''${disk:-?} swap=''${swapu:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
 
       # --- L2/DHCP state, logged only on change (the "before" timeline) ------
       # gateway ARP entry + DHCP router/DNS; NET line only when it differs from
