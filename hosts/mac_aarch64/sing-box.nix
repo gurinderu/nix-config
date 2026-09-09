@@ -128,32 +128,44 @@ let
     # (e.g. github.com) kept being served, breaking SSH to GitHub over the tunnel.
     # Keying the stamp on config.json instead — the file the `exec` below actually
     # loads — makes the stamp track reality instead of intent.
+    # The reader is store jq, not /usr/bin/python3: python3 there is a CLT
+    # shim that dies with the CLT after a macOS update (the class documented
+    # in dns-fallback.nix), and unlike that /nix-independent daemon this
+    # script already runs behind `wait4path /nix/store` and execs a store
+    # sing-box, so the store is guaranteed present. Same jq expression as the
+    # thinkpad guard (hosts/thinkpad-x1-gen12/sing-box.nix) — one reader
+    # semantics on both hosts.
     stamp=${stateDir}/fakeip-range
-    want=$(/usr/bin/python3 -c '
-import json, sys
-try:
-    with open(sys.argv[1]) as f:
-        cfg = json.load(f)
-    for dns_server in cfg.get("dns", {}).get("servers", []):
-        r = dns_server.get("inet4_range")
-        if r:
-            print(r)
-            break
-except Exception:
-    pass
-' ${configPath} 2>/dev/null)
+    want=$(${pkgs.jq}/bin/jq -r 'first(.dns.servers[]? | .inet4_range // empty)' \
+      ${configPath} 2>/dev/null)
     if [ -z "$want" ]; then
-      echo "sing-box: could not read inet4_range from ${configPath}; falling back to build-time ${fakeipRange}" >&2
-      want=${fakeipRange}
-    elif [ "$want" != "${fakeipRange}" ]; then
-      echo "sing-box: config.json still carries $want, build expects ${fakeipRange}; home-manager has not re-rendered yet" >&2
-    fi
-    if [ "$(/bin/cat "$stamp" 2>/dev/null)" != "$want" ]; then
-      if [ -e ${stateDir}/cache.db ]; then
-        echo "sing-box: fakeip pool is now $want; dropping cache.db with its stale mappings" >&2
-        /bin/rm -f ${stateDir}/cache.db
+      # No readable range: SKIP the guard — never stamp on a guess. The old
+      # fallback stamped the BUILD-TIME constant here, which is exactly the
+      # stamp-tracks-intent-not-reality behaviour root-caused above (the
+      # 13-minute 2026-09-03 incident): a stamp claiming a range the running
+      # process never loaded suppresses the wipe that would cure the mix.
+      # sing-box itself will fail loudly on the same file right below if the
+      # config is truly broken.
+      echo "sing-box: could not read inet4_range from ${configPath}; skipping the stale-fakeip guard this start" >&2
+    else
+      if [ "$want" != "${fakeipRange}" ]; then
+        echo "sing-box: config.json still carries $want, build expects ${fakeipRange}; home-manager has not re-rendered yet" >&2
       fi
-      printf '%s' "$want" > "$stamp"
+      if [ "$(/bin/cat "$stamp" 2>/dev/null)" != "$want" ]; then
+        wiped=1
+        if [ -e ${stateDir}/cache.db ]; then
+          echo "sing-box: fakeip pool is now $want; dropping cache.db with its stale mappings" >&2
+          /bin/rm -f ${stateDir}/cache.db || wiped=0
+        fi
+        # Stamp only when the wipe actually happened (or there was nothing to
+        # wipe): recording the new range over a surviving old-pool cache.db
+        # would silence the guard forever while stale mappings keep serving.
+        if [ "$wiped" = 1 ]; then
+          printf '%s' "$want" > "$stamp"
+        else
+          echo "sing-box: could not remove stale cache.db; NOT stamping $want so the guard retries next start" >&2
+        fi
+      fi
     fi
 
     # Stamp the moment THIS process instance starts, so postActivation (below)
