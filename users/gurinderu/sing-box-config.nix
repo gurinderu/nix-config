@@ -518,6 +518,15 @@ in
       # direct-out member: the kill-switch stays fail-closed (proxy down => drop,
       # never leak to direct). Captive portals are handled by the portalDomains
       # direct rule above, not by flipping this selector.
+      #
+      # The choice PERSISTS: cache_file stores selector state, so block-out
+      # survives kickstarts, crashes and reboots — the one thing that clears
+      # it is the stale-pool cache.db wipe in hosts/mac_aarch64/sing-box.nix
+      # (a fakeip-range change), which resets this selector to its default.
+      # A forgotten flip therefore presents as "tun dead, direct fine"
+      # indefinitely; net-observer carries sel-main= in TICK for exactly this,
+      # and its watchdog declines to kick while block-out is selected (a
+      # fresh process restores the selection from cache.db, curing nothing).
       type = "selector";
       tag = "vless-main";
       outbounds = [
