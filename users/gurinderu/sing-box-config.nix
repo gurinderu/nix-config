@@ -632,11 +632,12 @@ in
         outbound = "direct-out";
       }
       {
-        # Fakeip range -> everything else through the VPN. Kept in lockstep with
-        # inet4_range above: any 198.18.0.0/15 address here would claim space
-        # macOS itself hands to awdl0 for the tunnel — the route never wins
-        # against a connected interface, so the rule would only be a lie in the
-        # config about where that traffic goes. See ./fakeip-range.nix.
+        # Fakeip range -> everything else through the VPN. Same binding as
+        # inet4_range above, so the two cannot drift. The range must stay out
+        # of 198.18.0.0/15: that is space macOS itself hands to awdl0, and a
+        # route never wins against a connected interface — the rule would
+        # only be a lie in the config about where that traffic goes. See
+        # ./fakeip-range.nix.
         ip_cidr = [
           fakeipRange
           "fc00::/18"

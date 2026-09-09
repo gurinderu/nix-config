@@ -14,6 +14,21 @@
 #                                         the poisoned-cache alert, via
 #                                         shellGlobs
 #
+# Consumers that do NOT import this file (check them by hand on a pool move):
+#   hosts/thinkpad-x1-gen12/sing-box.nix  stale-cache guard reads inet4_range
+#                                         from the RENDERED config at runtime
+#                                         (follows automatically, listed for
+#                                         completeness)
+#   net-observerd (flake input)           is_fakeip_v4 in crates/macos/src/
+#                                         dns.rs HARDCODES the old
+#                                         198.18.0.0/15 — dead against this
+#                                         pool until fixed upstream (raise on
+#                                         its PR #1); its fakeip_probe_addr
+#                                         is config-driven and follows
+#   users/gurinderu/ssh.nix               comment references the pool as the
+#                                         reason the `nixos` host is pinned
+#                                         to a tailnet IP
+#
 # HISTORY, so the next incident doesn't repeat this exact investigation:
 #
 # 1) Started as the full 198.18.0.0/15 (RFC 2544 benchmark space, never
@@ -80,7 +95,7 @@
 #
 # Exported as an attrset so every consumer derives from the ONE value above:
 #   range      — the CIDR string (dns inet4_range, route ip_cidr, the darwin
-#                stale-cache guard's build-time fallback)
+#                stale-cache guard's build-time reference)
 #   shellGlobs — per-/16 shell case-globs covering exactly this range
 #                ("172.24.*" .. "172.27.*"), for membership tests in scripts
 #                that must not depend on anything outside /bin + /usr/bin:
@@ -88,35 +103,46 @@
 #                and /usr/bin/python3 (the previous membership test there) is
 #                a CLT shim that dies with the CLT after a macOS update — the
 #                exact incident class that daemon exists for. Derived at eval
-#                time so moving the range can never leave a consumer's glob
-#                behind (three call sites used to be kept in lockstep by
-#                hand, each with its own "update me too" comment).
+#                time so moving the range cannot leave an in-repo glob site
+#                behind (the two net-observer sites carried hand-maintained
+#                glob copies with "update me too" comments; the dns-fallback
+#                site was a python CIDR test with the same lockstep burden).
+#
+# The validation throws live INSIDE shellGlobs, so `.range`-only consumers
+# (both host configs) never inherit the glob-derivability constraint: a
+# future pool that per-/16 globs cannot express would fail eval only at the
+# glob sites, which are the ones that would actually misbehave.
 let
   range = "172.24.0.0/14";
-  # a.b.0.0/p with 8 <= p <= 16: such a range is a whole number of /16s, so
-  # each glob is one second-octet wildcard. Anything else (host bits set, a
-  # prefix longer than /16) has no per-/16 glob representation — refuse
-  # loudly at eval time rather than emit globs that over- or under-match.
-  m = builtins.match "([0-9]+)[.]([0-9]+)[.]0[.]0/([0-9]+)" range;
-  o1 = builtins.elemAt m 0;
+  # Octets without leading zeros, so fromJSON parses them as plain integers
+  # (fromJSON "024" dies with an opaque JSON error before any throw here
+  # could describe the problem).
+  m = builtins.match "(0|[1-9][0-9]{0,2})[.](0|[1-9][0-9]{0,2})[.]0[.]0/(0|[1-9][0-9]?)" range;
+  o1 = builtins.fromJSON (builtins.elemAt m 0);
   o2 = builtins.fromJSON (builtins.elemAt m 1);
   prefix = builtins.fromJSON (builtins.elemAt m 2);
-  pow2 = n: if n == 0 then 1 else 2 * pow2 (n - 1);
+  pow2 = n: if n <= 0 then 1 else 2 * pow2 (n - 1);
   # How many /16s the prefix spans (1 for /16, 4 for /14, 256 for /8).
   width = pow2 (16 - prefix);
 in
-if m == null then
-  throw "fakeip-range: ${range} must be a.b.0.0/p to derive per-/16 shell globs"
-else if prefix < 8 || prefix > 16 then
-  throw "fakeip-range: /${toString prefix} is outside /8../16, where one glob per second octet covers the range exactly"
-else if o2 - (o2 / width) * width != 0 then
-  throw "fakeip-range: ${range} is not aligned to its own size (second octet ${toString o2} is not a multiple of ${toString width})"
-else
-  {
-    inherit range;
-    shellGlobs =
-      if prefix == 8 then
-        [ "${o1}.*" ]
-      else
-        builtins.genList (i: "${o1}.${toString (o2 + i)}.*") width;
-  }
+{
+  inherit range;
+  # a.b.0.0/p with 8 <= p <= 16: such a range is a whole number of /16s, so
+  # each glob is one second-octet wildcard. Anything else (host bits set,
+  # out-of-range octets, a prefix longer than /16) has no per-/16 glob
+  # representation — refuse loudly at eval time rather than emit globs that
+  # over- or under-match: a never-matching glob set would turn the AWDL
+  # guard and the FAKEIP classifiers into silent no-ops (they all fall
+  # through on no-match), i.e. fail OPEN.
+  shellGlobs =
+    if m == null then
+      throw "fakeip-range: ${range} must be a.b.0.0/p (no leading zeros) to derive per-/16 shell globs"
+    else if o1 > 255 || o2 > 255 then
+      throw "fakeip-range: ${range} has an octet above 255"
+    else if prefix < 8 || prefix > 16 then
+      throw "fakeip-range: /${toString prefix} is outside /8../16, where one glob per second octet covers the range exactly"
+    else if o2 - (o2 / width) * width != 0 then
+      throw "fakeip-range: ${range} is not aligned to its own size (second octet ${toString o2} is not a multiple of ${toString width})"
+    else
+      builtins.genList (i: "${toString o1}.${toString (o2 + i)}.*") width;
+}

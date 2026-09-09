@@ -831,6 +831,10 @@ let
           case "$cache" in
             # v4 globs derived from users/gurinderu/fakeip-range.nix at eval
             # time, unanchored here (matched inside dscacheutil output).
+            # *fc00:* is a deliberate literal, NOT derived: no v6 fakeip has
+            # been issued since 2026-07-24 (inet6_range is unset in
+            # sing-box-config.nix), so it only catches a cache entry
+            # predating that — legacy detection kept while it costs one glob.
             ${builtins.concatStringsSep " | " (map (g: "*" + g) fakeipGlobs)} | *fc00:*)
               echo "$ts DNS ALERT poisoned mDNSResponder cache: fakeip for a .ru name"
               ;;
