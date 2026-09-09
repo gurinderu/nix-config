@@ -59,14 +59,35 @@ nix-darwin.lib.darwinSystem {
     # pointed at one file interleave, which would corrupt the very record the
     # migration is being judged against.
     inputs.net-observer.darwinModules.default
-    {
-      services.net-observer.enable = true;
-      # The module sets no QoS band, and this daemon's DuckDB record is the
-      # forensic oracle the migration is judged against — under a build
-      # storm (Background QoS since 2026-09-05) it must keep observing, same
-      # reasoning as the shell observer's ProcessType in net-observer.nix.
-      launchd.daemons.net-observerd.serviceConfig.ProcessType = "Interactive";
-    }
+    (
+      { lib, config, ... }:
+      {
+        services.net-observer.enable = true;
+        # The module sets no QoS band, and this daemon's DuckDB record is the
+        # forensic oracle the migration is judged against — under a build
+        # storm (Background QoS since 2026-09-05) it must keep observing, same
+        # reasoning as the shell observer's ProcessType in net-observer.nix.
+        launchd.daemons.net-observerd.serviceConfig.ProcessType = "Interactive";
+
+        # net-observerd reads its sing-box facts from a compile-time constant
+        # /etc/sing-box/config.json, while this host renders the real config
+        # to ~gurinderu/.config/sing-box/config.json — with nothing at the
+        # /etc path, 2 of the 4 diagnostic signatures under live trial are
+        # silently dead: fakeip-hijack bails without the file (it needs the
+        # fakeip route interface) and endpoint-block only ever records Skip
+        # ("absence of a measurement"), so an all-quiet log would read as "no
+        # faults seen". Bridge with a symlink until the daemon grows a config
+        # knob for the path (to be raised on PR #1). The symlink's target is
+        # re-resolved on every open, so home-manager's atomic config rewrites
+        # are always followed; file permissions still apply through it (the
+        # daemon runs as root and may read the 600 user file).
+        system.activationScripts.postActivation.text = lib.mkAfter ''
+          mkdir -p /etc/sing-box
+          ln -sfn ${config.users.users.gurinderu.home}/.config/sing-box/config.json \
+            /etc/sing-box/config.json
+        '';
+      }
+    )
     inputs.nix-homebrew.darwinModules.nix-homebrew
     {
       nix-homebrew = {
