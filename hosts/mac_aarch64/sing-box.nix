@@ -22,7 +22,7 @@ let
   # networking.dns in ./configuration.nix). It is not a real interface address,
   # so we have to install it as an alias ourselves before sing-box can bind it.
   dnsPin = import ../../users/gurinderu/dns-pin.nix;
-  fakeipRange = import ../../users/gurinderu/fakeip-range.nix;
+  fakeipRange = (import ../../users/gurinderu/fakeip-range.nix).range;
   dnsPinRe = lib.replaceStrings [ "." ] [ "\\." ] dnsPin;
   dnsServices = lib.concatMapStringsSep " " lib.escapeShellArg config.networking.knownNetworkServices;
 

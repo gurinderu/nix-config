@@ -83,8 +83,13 @@
 let
   # Single source of truth: the pin set in configuration.nix.
   wantDns = lib.head config.networking.dns;
-  # The fakeip pool, for the AWDL collision guard in the loop below.
-  fakeipRange = import ../../users/gurinderu/fakeip-range.nix;
+  # The fakeip pool, for the AWDL collision guard in the loop below. The guard
+  # tests membership with the derived shell globs, NOT an external interpreter:
+  # this daemon must keep working with /nix gone, and /usr/bin/python3 (the
+  # previous test) is a CLT shim that dies with the CLT after a macOS update —
+  # which silently turned the guard into a no-op via its `|| continue`.
+  fakeip = import ../../users/gurinderu/fakeip-range.nix;
+  fakeipGlob = lib.concatStringsSep " | " fakeip.shellGlobs;
   # Liveness probe for sing-box. NOT the same address as the pin any more: the
   # pin is an interface alias installed by sing-box's start script
   # (./sing-box.nix), so it is present whether or not sing-box is healthy and
@@ -282,14 +287,20 @@ let
           lo0 | utun* | gif* | stf* | anpi* | bridge*) continue ;;
         esac
         for a in $(/sbin/ifconfig "$ifc" 2>/dev/null | /usr/bin/awk '/inet /{print $2}'); do
-          /usr/bin/python3 -c "import ipaddress,sys; raise SystemExit(0 if ipaddress.ip_address(sys.argv[1]) in ipaddress.ip_network('${fakeipRange}') else 1)" "$a" 2>/dev/null || continue
+          # Pure-sh membership test on globs derived from the pool at eval
+          # time (fakeip-range.nix shellGlobs) — anchored by case semantics,
+          # no external interpreter (see the fakeip binding above for why).
+          case "$a" in
+            ${fakeipGlob}) ;;
+            *) continue ;;
+          esac
           case "$ifc" in
             awdl* | llw*)
-              log "$ifc holds $a inside the fakeip pool ${fakeipRange} - stripping the alias (it hijacks fakeip routing)"
+              log "$ifc holds $a inside the fakeip pool ${fakeip.range} - stripping the alias (it hijacks fakeip routing)"
               /sbin/ifconfig "$ifc" -alias "$a" 2>/dev/null || true
               ;;
             *)
-              log "WARNING: $ifc holds $a inside the fakeip pool ${fakeipRange} - a real network uses the range; NOT stripping, fakeips in that subnet will misroute"
+              log "WARNING: $ifc holds $a inside the fakeip pool ${fakeip.range} - a real network uses the range; NOT stripping, fakeips in that subnet will misroute"
               ;;
           esac
         done
