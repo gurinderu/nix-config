@@ -84,9 +84,21 @@ nix-darwin.lib.darwinSystem {
           # Off by default upstream because ONE sample costs seconds of
           # system_profiler wall time; opted in here, on its own slow period
           # (upstream default 5m — deliberately not overridden). Passive:
-          # reads the system wireless report, transmits nothing.
-          [air]
+          # reads the system wireless report, transmits nothing. NB the
+          # section is [collectors.air] — a bare [air] parses but is silently
+          # ignored (no such top-level key; this file shipped that mistake
+          # for a day). Figment deep-merges, so a section carrying one key
+          # leaves the rest of that collector's defaults intact.
+          [collectors.air]
           enabled = true
+
+          # sing-box's Clash API exposes only the groups the config declares
+          # — the upstream default GLOBAL (clash-core convention) 404s here
+          # and the selector column reads "-". vless-auto is the urltest
+          # group whose `now` names the active node (same group the shell
+          # observer's sel= column polls).
+          [collectors.proxy]
+          selector_group = "vless-auto"
         '';
         # The module sets no QoS band, and this daemon's DuckDB record is the
         # forensic oracle the migration is judged against — under a build
