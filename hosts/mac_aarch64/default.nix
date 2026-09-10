@@ -60,9 +60,34 @@ nix-darwin.lib.darwinSystem {
     # migration is being judged against.
     inputs.net-observer.darwinModules.default
     (
-      { lib, config, ... }:
+      {
+        lib,
+        config,
+        pkgs,
+        ...
+      }:
       {
         services.net-observer.enable = true;
+
+        # Overrides over the daemon's built-in defaults (figment merges the
+        # file on top, absent sections keep their documented defaults).
+        # System-level writeText, NOT a home-manager file, deliberately: the
+        # config lands in the LaunchDaemon's argv, so a content change makes
+        # a new store path, changes the plist and nix-darwin RESTARTS the
+        # daemon on switch — an HM-managed file at a stable home path would
+        # apply silently only at the next unrelated restart (the exact
+        # stale-config class sing-box needed a reload daemon to fix). It is
+        # also a root daemon: its acting/socket knobs should not live in a
+        # user-writable file.
+        services.net-observer.configFile = pkgs.writeText "net-observer.toml" ''
+          # air: the radio environment (foreign APs, channels, signal/noise).
+          # Off by default upstream because ONE sample costs seconds of
+          # system_profiler wall time; opted in here, on its own slow period
+          # (upstream default 5m — deliberately not overridden). Passive:
+          # reads the system wireless report, transmits nothing.
+          [air]
+          enabled = true
+        '';
         # The module sets no QoS band, and this daemon's DuckDB record is the
         # forensic oracle the migration is judged against — under a build
         # storm (Background QoS since 2026-09-05) it must keep observing, same
