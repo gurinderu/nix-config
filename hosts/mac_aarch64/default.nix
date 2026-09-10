@@ -69,6 +69,13 @@ nix-darwin.lib.darwinSystem {
         # reasoning as the shell observer's ProcessType in net-observer.nix.
         launchd.daemons.net-observerd.serviceConfig.ProcessType = "Interactive";
 
+        # The module wires only the daemon; net-observer-cli (status,
+        # incidents, live events, the offline forensics queries) otherwise
+        # exists solely as an unlinked store path — discovered the hard way
+        # on the first trial deploy: "я не вижу обсервера". Put the package
+        # on PATH so the record is actually reachable.
+        environment.systemPackages = [ config.services.net-observer.package ];
+
         # net-observerd reads its sing-box facts from a compile-time constant
         # /etc/sing-box/config.json, while this host renders the real config
         # to ~gurinderu/.config/sing-box/config.json — with nothing at the
