@@ -5,17 +5,8 @@
   ...
 }:
 let
-  # Pool of parallel ephemeral runners. One entry per repository this box
-  # serves; `count` is the number of parallel ephemeral runners for that repo.
-  #
-  # Deliberately 1+1 (was 3+1): every runner's cargo storm competes for CPU
-  # with the userspace sing-box that carries ALL of this box's egress — the
-  # same starvation class measured on the Mac (load 64+ → half the probes
-  # fail). One runner per repo caps each repo at a single storm; the cost is
-  # that a repo's CI jobs serialise (a lints+tests push runs them one after
-  # the other, and concurrent PRs queue). Raise counts again only together
-  # with the CPUWeight prioritisation (sing-box up, runners down) from the
-  # 2026-09-09 review backlog.
+  # One entry per repository this box serves; `count` is the number of
+  # parallel ephemeral runners for that repo.
   repos = [
     {
       repo = "warp";
