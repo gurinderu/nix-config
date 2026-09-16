@@ -185,11 +185,11 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1789554929,
-        "narHash": "sha256-re6rSEa9vyMLJKa4nSyttSk9odZVIY4VJwO0NU9FB6U=",
+        "lastModified": 1789577530,
+        "narHash": "sha256-m0TY71fwtuesd+BzObJFI3U0fi7aS6KyZdPG7kK5LnM=",
         "owner": "gurinderu",
         "repo": "net-observer",
-        "rev": "ee34c8de5d2eb1486239072a3b1c3aef11023f33",
+        "rev": "c3ef99b7b04330dd8e8778712c3d06246d7e0da3",
         "type": "github"
       },
       "original": {
