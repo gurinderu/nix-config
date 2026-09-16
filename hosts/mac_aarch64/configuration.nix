@@ -7,7 +7,6 @@
 {
   imports = [
     ./sing-box.nix
-    ./net-observer.nix
     ./dns-fallback.nix
     ./netbird.nix
     ./user-agents.nix

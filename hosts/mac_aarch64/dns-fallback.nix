@@ -34,9 +34,10 @@
 # stranded the machine fail-open after a reboot and could wedge itself into a
 # zero-DNS state after a mid-incident rebuild.
 #
-# The ordinary wedge (sing-box process alive but stuck) keeps its existing
-# recovery path — KeepAlive + the net-observer watchdog kickstart. This
-# daemon only reacts to the TUN address vanishing entirely.
+# The ordinary wedge (sing-box process alive but stuck) is NOT this daemon's
+# problem — it only reacts to the TUN address vanishing entirely. NB since
+# the shell observer's retirement (2026-09-16) nothing auto-kicks a wedged
+# sing-box between switches; KeepAlive covers only a crashed process.
 #
 # Second, independent probe: physical-interface default route (added after
 # the 2026-09-03 13:28-13:59 incident, see /var/log/net-observer.log.1). Wi-Fi
@@ -61,8 +62,7 @@
 # `netstat -rn -f inet` taken while investigating this incident showed
 # exactly one non-utun "default" row via en0 alongside the utun7 halves). So
 # the probe cannot just grep for the word "default"; it must specifically
-# require the outgoing interface NOT be a utun (see net-observer.nix's own
-# CHG-line default-route logic for the same interface convention).
+# require the outgoing interface NOT be a utun.
 #
 # Coupling with sing-box-netreload: flipping DNS makes configd rewrite
 # resolv.conf, which is sing-box-netreload's WatchPaths trigger. Left alone
@@ -380,9 +380,8 @@ in
     KeepAlive = true;
     ThrottleInterval = 5;
     # This daemon is the DNS repair path during exactly the load storms that
-    # starve everything else — same QoS reasoning as sing-box and
-    # net-observer: it must keep ticking while a Background-band build storm
-    # owns the run queue.
+    # starve everything else — same QoS reasoning as sing-box: it must keep
+    # ticking while a Background-band build storm owns the run queue.
     ProcessType = "Interactive";
     StandardOutPath = "/var/log/dns-fallback.log";
     StandardErrorPath = "/var/log/dns-fallback.log";

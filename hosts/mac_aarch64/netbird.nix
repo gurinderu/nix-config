@@ -30,8 +30,8 @@
 #   IP ban-cycled by the coworking MikroTik in July (then: tailscale in relay
 #   mode). If the ban cycle comes back with netbird always on, the kill
 #   command above is the first experiment.
-# - utun churn/count: net-observer.nix documents utun churn as kernel-panic
-#   exposure (2026-09-03, mbuf path); this adds one LONG-LIVED utun at boot,
+# - utun churn/count: utun churn is kernel-panic exposure on this box
+#   (2026-09-03, mbuf path); this adds one LONG-LIVED utun at boot,
 #   which is the cheap end of that trade — the panic correlate is churn from
 #   restart storms, not a stable extra interface.
 #

@@ -42,12 +42,13 @@
 # only surfaces the BTM ones — flipping the toggle back is Settings-only,
 # see ./btm-check.nix.
 #
-# This is the activation-time half of the job-gone repair; the runtime half
-# (between switches) lives in net-observer.nix and covers only sing-box —
-# and net-observer can itself be the missing job (it was BTM-disallowed on
-# 2026-09-03), which is exactly why this hook must cover the full set: a
-# switch is the one recovery action that does not depend on any org.nixos.*
-# job being alive.
+# Since the shell observer's retirement (2026-09-16) this sweep is the ONLY
+# job-gone repair — the runtime half that re-bootstrapped a missing sing-box
+# between switches went with it (to return in net-observerd's acting
+# handler). An observer can itself be the missing job (net-observer was
+# BTM-disallowed on 2026-09-03), which is exactly why this hook must cover
+# the full set: a switch is the one recovery action that does not depend on
+# any org.nixos.* job being alive.
 #
 # A failed bootstrap must not abort activation (activate runs under `set -e`):
 # over SSH with nobody logged in there is no gui/<uid> domain at all, a job
