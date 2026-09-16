@@ -48,21 +48,6 @@
 #                                   2026-09-02..04 broke networksetup with
 #                                   ENOSPC), each previously attributable only
 #                                   by manual archaeology
-#                  mac= bss= lease= Wi-Fi identity + DHCP lease start — the
-#                                   roam timeline. 2026-09-16: macOS ping-
-#                                   ponged between two same-AP twin SSIDs
-#                                   every ~3 min for hours; each SSID carried
-#                                   a different private MAC, so every hop was
-#                                   "link address changed" → DHCP from
-#                                   scratch → a 10-20s hole, and NO column
-#                                   here recorded any of it — the diagnosis
-#                                   took manual log-show archaeology of
-#                                   airportd/IPConfiguration. mac/bss are
-#                                   short hashes (world-readable log, same
-#                                   reason SNAP strips them from wdutil
-#                                   output), mac prefixed hw#/priv# by the
-#                                   U/L bit; a lease= change between ticks is
-#                                   a re-DHCP (roam INIT-REBOOT or DISCOVER).
 #
 # Diagnosis by column: gw=FAIL → local network/Wi-Fi down (infra, not us);
 # gw=OK direct=OK vless=OK tun=000 → FIRST check sel-main: block-out there
@@ -72,11 +57,7 @@
 # proxy server is dead/blocked from this path; tun=000 with load in the tens
 # (2026-07-24: ~31 on 8 cores, swap full) → host starvation of the userspace
 # TUN path — restarts do NOT cure it, watch for repeated ACT kicks minutes
-# apart and inflated direct/nks[rtr] latencies at the cluster edges;
-# mac=/bss= flipping between two values with lease= re-issued every ~3 min →
-# client-side roam ping-pong between twin SSIDs (ALERT wifi-churn fires at
-# ≥4 flips/15m) — fix the Wi-Fi config (forget one twin, or align the
-# Private Wi-Fi Address setting so the MAC stops changing), not sing-box.
+# apart and inflated direct/nks[rtr] latencies at the cluster edges.
 #
 #   ACT  lines — the built-in watchdog acting on that same diagnosis: when the
 #                wedge signature (tunnel dead while the direct path works)
@@ -367,42 +348,12 @@ let
       /usr/bin/awk '/^nameserver/ { ns = ns " " $2 } END { print "dns:" ns }' /etc/resolv.conf 2>/dev/null
     }
 
-    # Wi-Fi identity values go into the log as SHORT HASHES, never raw: the
-    # log is world-readable and SNAP below already strips MAC/BSSID from its
-    # wdutil dump for exactly that reason. A hash keeps what diagnosis needs
-    # — SAME or CHANGED across ticks, greppable as a stable token — without
-    # turning the log into an identity/location trail. Empty and the literal
-    # "<redacted>" (what a privacy-gated source prints) both map to "-".
-    ident_hash() {
-      local h
-      if [ -z "$1" ] || [ "$1" = "<redacted>" ]; then printf '%s' -; return; fi
-      h=$(/sbin/md5 -q -s "$1" 2>/dev/null | /usr/bin/cut -c1-6)
-      printf '%s' "''${h:--}"
-    }
-
-    # hw vs priv by the U/L bit of the first octet (second hex digit 2/6/a/e
-    # = locally administered = macOS per-SSID private address). The
-    # distinction is the roam-hole discriminator: two twin SSIDs with
-    # DIFFERENT private MACs roam with a link-address change (DHCP from
-    # scratch, 10-20s hole); equal MACs roam with the lease intact
-    # (subsecond INIT-REBOOT, harmless — the 2026-09-16 evening state).
-    mac_kind() {
-      case "$1" in
-        "") printf '%s' - ;;
-        ?[26aeAE]:*) printf '%s' priv ;;
-        *) printf '%s' hw ;;
-      esac
-    }
-
     # Compact one-line snapshot of the link/DHCP layer that the TICK probes do
     # not record: the gateway's ARP entry (empty/incomplete = L2 is dead, the
     # coworking-MikroTik failure signature) and the DHCP router/DNS from the
     # lease. Logged by the caller only when it changes (see the NET block), so
     # the log carries a timeline of L2 state — the state just before a gw drop
-    # is the last NET line above the GWD dump. With mac/bss/lease in the
-    # snapshot every roam that changes the link identity prints a NET line —
-    # the timeline the 2026-09-16 ping-pong diagnosis had to reconstruct from
-    # the unified log by hand. Args: iface gw link ip ssid mac bss lease.
+    # is the last NET line above the GWD dump. Args: iface gw link ip ssid.
     link_snapshot() {
       local gwmac pkt dhcp_router dhcp_dns
       if [ -n "$2" ]; then
@@ -414,7 +365,7 @@ let
       pkt=$(/usr/sbin/ipconfig getpacket "$1" 2>/dev/null)
       dhcp_router=$(printf '%s\n' "$pkt" | /usr/bin/sed -n 's/^router.*: *{*\([0-9][0-9.]*\).*/\1/p' | /usr/bin/head -1)
       dhcp_dns=$(printf '%s\n' "$pkt" | /usr/bin/sed -n 's/^domain_name_server.*: *{*\([0-9][0-9.]*\).*/\1/p' | /usr/bin/head -1)
-      echo "iface=''${1:--} link=''${3:--} ip=''${4:--} ssid=''${5:--} mac=''${6:--} bss=''${7:--} lease=''${8:--} gw=''${2:--} gwmac=''${gwmac:-none} dhcp_router=''${dhcp_router:--} dhcp_dns=''${dhcp_dns:--}"
+      echo "iface=''${1:--} link=''${3:--} ip=''${4:--} ssid=''${5:--} gw=''${2:--} gwmac=''${gwmac:-none} dhcp_router=''${dhcp_router:--} dhcp_dns=''${dhcp_dns:--}"
     }
 
     # Deep ARP-layer forensics for a gateway-down incident — exactly the state
@@ -570,26 +521,6 @@ let
     }
 
     echo "$(/bin/date '+%F %T') START net-observer"
-    # A hole in the tick record is itself evidence — the 2026-09-16 diagnosis
-    # had to infer a 4.2h observer outage (manual bootout at 14:59, repaired
-    # only by a later switch) from surrounding timestamps. Say it explicitly:
-    # if the newest TICK in the log is old, print the hole's bounds. Sleep
-    # produces one too (no ticks with the lid closed) — the line documents
-    # the hole either way; WHY lives in launchd.log ("bootout initiated by").
-    last_tick=$(/usr/bin/tail -c 262144 ${logPath} 2>/dev/null \
-      | /usr/bin/grep -a ' TICK ' | /usr/bin/tail -1 | /usr/bin/cut -c1-19)
-    if [ -n "$last_tick" ]; then
-      last_s=$(/bin/date -j -f '%Y-%m-%d %H:%M:%S' "$last_tick" +%s 2>/dev/null)
-      now_s=$(/bin/date +%s)
-      case "$last_s" in
-        "" | *[!0-9]*) ;;
-        *)
-          if [ $((now_s - last_s)) -gt 300 ]; then
-            echo "$(/bin/date '+%F %T') GAP no ticks for $(((now_s - last_s) / 60)) min (last: $last_tick) — daemon was down or the host slept; the TICK/NET/roam timeline has a hole here"
-          fi
-          ;;
-      esac
-    fi
     /bin/mkdir -p /var/lib/net-observer
     # Request drop-box for unprivileged callers (a terminal, or the menu-bar app
     # once it learns to drive this daemon). They run as the login user and must
@@ -636,12 +567,6 @@ let
     last_good_snap="(none yet)"
     gw_incident=0
     prev_gw=""
-    # Wi-Fi churn detector state (see the block after NET below): last known
-    # link identity, the sliding window of identity-change timestamps, and
-    # the ALERT rate limiter.
-    prev_ident=""
-    roam_times=""
-    last_churn=0
     while :; do
       ts=$(/bin/date '+%F %T')
 
@@ -690,17 +615,6 @@ let
       probe_dns "$rtr" "${dnsProbeDomain}" >"$dnstmp/nrtr" 2>/dev/null & dp3=$!
       probe_doh "${dnsProbeDomain}" "$iface" >"$dnstmp/ndoh" 2>/dev/null & dp4=$!
       /usr/bin/curl -m 4 -s -o /dev/null -w '%{http_code}' "https://${dnsProbeDomain}/" >"$dnstmp/site" 2>/dev/null & dp5=$!
-      # Wi-Fi radio identity (SSID/BSSID/channel/RSSI) via wdutil — the only
-      # source a root daemon has (ipconfig getsummary redacts the SSID for
-      # location-ungated callers; the ssid= column read the literal
-      # "<redacted>" for months without anyone noticing the signal was gone).
-      # Backgrounded like the DNS probes; wdutil has no timeout flag, so the
-      # collect below kills it if the driver call outlives the DNS probes'
-      # budget — a missing verdict beats a stalled loop. Completion is
-      # signalled by a marker FILE, not by probing the pid: a finished child
-      # stays a zombie until wait(), and `kill -0` answers "alive" for a
-      # zombie — pid-probing would read every completed probe as stuck.
-      ( /usr/bin/wdutil info >"$dnstmp/wifi" 2>/dev/null; : >"$dnstmp/wifi.done" ) & dpw=$!
 
       gw=$(/sbin/route -n get default 2>/dev/null | /usr/bin/awk '/gateway:/ { print $2; exit }')
       if [ -z "$gw" ] && [ -n "$iface" ]; then
@@ -741,27 +655,17 @@ let
 
       # macOS redacts the SSID for processes without a location entitlement
       # (ipconfig prints the literal "<redacted>", networksetup claims no
-      # association). Keep whatever ipconfig gives as the fallback — the
-      # wdutil value collected below replaces it when readable. The same
-      # getsummary call also yields the DHCP lease start: a lease= change
-      # between ticks is a re-DHCP (roam INIT-REBOOT or full DISCOVER) —
-      # the 2026-09-16 ping-pong re-leased every ~3 min, invisibly.
-      summ=$(/usr/sbin/ipconfig getsummary "$iface" 2>/dev/null)
-      ssid=$(printf '%s\n' "$summ" \
+      # association). Log whatever ipconfig gives — as a root daemon it may be
+      # the real name; if not, the gateway IP in the TICK line still uniquely
+      # identifies the network.
+      ssid=$(/usr/sbin/ipconfig getsummary "$iface" 2>/dev/null \
         | /usr/bin/awk -F ' SSID : ' '/ SSID : / { print $2; exit }')
-      lease=$(printf '%s\n' "$summ" \
-        | /usr/bin/sed -n 's/^ *LeaseStartTime *: *//p' | /usr/bin/head -1 \
-        | /usr/bin/tr ' ' '-')
 
       # Link-layer truth for "who killed the network": link=active + an IP
       # while the gateway ping fails = still associated, the network itself
       # died (infra problem); link=inactive or no IP = the AP dropped us /
-      # DHCP broke (local problem). The same ifconfig also yields the CURRENT
-      # link address — the per-SSID private vs hardware MAC whose flip is
-      # what turned the 2026-09-16 roams into DHCP-from-scratch holes.
-      ifout=$(/sbin/ifconfig "$iface" 2>/dev/null)
-      link=$(printf '%s\n' "$ifout" | /usr/bin/awk '/status:/ { print $2 }')
-      mac=$(printf '%s\n' "$ifout" | /usr/bin/awk '/^\tether / { print $2; exit }')
+      # DHCP broke (local problem).
+      link=$(/sbin/ifconfig "$iface" 2>/dev/null | /usr/bin/awk '/status:/ { print $2 }')
       myip=$(/usr/sbin/ipconfig getifaddr "$iface" 2>/dev/null)
       direct=$(probe_tcp 1.1.1.1 443 "$iface")
       tun=$(/usr/bin/curl -m 4 -s -o /dev/null -w '%{http_code}' https://www.gstatic.com/generate_204 2>/dev/null)
@@ -843,91 +747,18 @@ let
       nrtr=$(/bin/cat "$dnstmp/nrtr" 2>/dev/null)
       ndoh=$(/bin/cat "$dnstmp/ndoh" 2>/dev/null)
       site=$(/bin/cat "$dnstmp/site" 2>/dev/null)
-      # Reap the wdutil probe. The DNS waits above already burned the tick's
-      # slack (up to ~4s), so a probe that has not written its done-marker by
-      # now is stuck inside the driver — kill it (and its wdutil child) and
-      # record SLOW; identity comparison skips the tick rather than counting
-      # the kill as a roam.
-      if [ -f "$dnstmp/wifi.done" ]; then
-        wifi_slow=0
-      else
-        /usr/bin/pkill -P "$dpw" 2>/dev/null
-        kill "$dpw" 2>/dev/null
-        wifi_slow=1
-      fi
-      wait "$dpw" 2>/dev/null
-      wssid=$(/usr/bin/sed -n 's/^ *SSID *: *//p' "$dnstmp/wifi" 2>/dev/null \
-        | /usr/bin/head -1 | /usr/bin/tr ' ' '_')
-      wbssid=$(/usr/bin/sed -n 's/^ *BSSID *: *//p' "$dnstmp/wifi" 2>/dev/null | /usr/bin/head -1)
-      wrssi=$(/usr/bin/sed -n 's/^ *RSSI *: *//p' "$dnstmp/wifi" 2>/dev/null \
-        | /usr/bin/head -1 | /usr/bin/awk '{ print $1 }')
-      wchan=$(/usr/bin/sed -n 's/^ *Channel *: *//p' "$dnstmp/wifi" 2>/dev/null \
-        | /usr/bin/head -1 | /usr/bin/awk '{ print $1 }')
-      case "$wssid" in "" | "<redacted>") ;; *) ssid=$wssid ;; esac
-      # Identity tokens: mac= carries the hw/priv verdict + hash; bsshash is
-      # the bare BSS identity (what the churn detector compares — NEVER the
-      # display column below, whose RSSI moves every tick); bss= is the
-      # human-facing column with channel and RSSI appended.
-      machash="$(mac_kind "$mac")#$(ident_hash "$mac")"
-      [ "$machash" = "-#-" ] && machash=-
-      bsshash="#$(ident_hash "$wbssid")"
-      if [ "$wifi_slow" = 1 ]; then
-        bss=SLOW
-      else
-        bss="$bsshash/''${wchan:--}/''${wrssi:--}"
-      fi
       /bin/rm -rf "$dnstmp"
 
-      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} mac=''${machash:--} bss=''${bss:--} lease=''${lease:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sel-main=''${selm:-?} sb=''${sb:--} load=''${load:-?} disk=''${disk:-?} swap=''${swapu:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
+      echo "$ts TICK if=''${iface:--} link=''${link:--} ip=''${myip:--} ssid=''${ssid:--} gw(''${gw:--})=$gwst direct[1.1.1.1]=$direct tun=''${tun:-ERR} sel=''${sel:-?} sel-main=''${selm:-?} sb=''${sb:--} load=''${load:-?} disk=''${disk:-?} swap=''${swapu:-?}$vls nks[sb]=''${nsb:-?} ru[sb]=''${rsb:-?} nks[rtr]=''${nrtr:-?} nks[doh]=''${ndoh:-?} site=''${site:-ERR}"
 
       # --- L2/DHCP state, logged only on change (the "before" timeline) ------
       # gateway ARP entry + DHCP router/DNS; NET line only when it differs from
       # the previous tick. last_good_snap keeps the most recent snapshot taken
       # while the gw still answered, so the incident dump can show before->after.
-      # Identity args are the stable tokens (bsshash, not the RSSI-bearing
-      # display column) so a NET line means the link/DHCP state actually
-      # changed, not that the signal strength moved.
-      link_snap=$(link_snapshot "$iface" "$gw" "$link" "$myip" "$ssid" "$machash" "$bsshash" "$lease")
-      if [ "$wifi_slow" = 1 ]; then
-        # Identity unknown this tick (wdutil killed): comparing would log a
-        # phantom flip to bss=#- and back. Skip; the bss=SLOW column in the
-        # TICK line is the visible tell, and the next healthy tick logs any
-        # real change that happened meanwhile.
-        :
-      elif [ "$link_snap" != "$prev_link_snap" ]; then
+      link_snap=$(link_snapshot "$iface" "$gw" "$link" "$myip" "$ssid")
+      if [ "$link_snap" != "$prev_link_snap" ]; then
         echo "$ts NET $link_snap"
         prev_link_snap="$link_snap"
-      fi
-
-      # --- Wi-Fi identity churn (the 2026-09-16 class) ---------------------
-      # macOS roaming between two same-AP twin SSIDs at equal RSSI flipped
-      # the link identity every ~3 min for two hours; with per-SSID private
-      # MACs every hop was a DHCP-from-scratch hole and the episode read as
-      # "the router bans me every 3 minutes". One flip is normal (walked into
-      # the office); a STREAK is the ping-pong. Observe-only by design — no
-      # watchdog coupling, because the cure is client Wi-Fi config and a
-      # sing-box restart cures nothing (the 2026-09-08 lesson on hasty
-      # auto-remediation stands).
-      if [ "$wifi_slow" = 0 ] && [ "$machash" != "-" ]; then
-        wifi_ident="$machash $bsshash"
-        if [ -n "$prev_ident" ] && [ "$wifi_ident" != "$prev_ident" ]; then
-          now_s=$(/bin/date +%s)
-          roam_times="$roam_times $now_s"
-          pruned=""
-          roam_n=0
-          for rt in $roam_times; do
-            if [ $((now_s - rt)) -le 900 ]; then
-              pruned="$pruned $rt"
-              roam_n=$((roam_n + 1))
-            fi
-          done
-          roam_times=$pruned
-          if [ "$roam_n" -ge 4 ] && [ $((now_s - last_churn)) -ge 300 ]; then
-            last_churn=$now_s
-            echo "$ts ALERT wifi-churn: $roam_n Wi-Fi identity changes (mac/bss) in 15m — roam ping-pong between twin SSIDs or a flapping AP; fix is Wi-Fi config (forget one twin SSID / align Private Wi-Fi Address), restarts cure nothing"
-          fi
-        fi
-        prev_ident="$wifi_ident"
       fi
       # Under quiet there is no OK verdict to key on, and freezing last_good_snap
       # at the last pre-quiet tick would hand a dump from hours ago as "before".
