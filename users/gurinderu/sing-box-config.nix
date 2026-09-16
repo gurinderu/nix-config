@@ -521,7 +521,19 @@ in
         1 # Germany 1, tcp (GHOSTNET — 2026-09-05 EOF storm) — LAST on purpose
       ];
       url = "https://www.gstatic.com/generate_204";
-      interval = "1m";
+      # 3m — the sing-box upstream default; the previous 1m was an
+      # unexplained 3x-override. A per-minute beacon means a fresh REALITY
+      # handshake to all 7 endpoints every 60s (no multiplex) — exactly the
+      # "frequency" leg of the ASN+JA3+frequency triad this config claims to
+      # break, and the 2026-09-16 bisection on the hostile coworking network
+      # pointed at sing-box's traffic pattern as the ban trigger: bans every
+      # 2-4 min with sing-box up (phases A/B/D), zero incidents in the
+      # window with it unloaded (phase C), first router action ~2 min after
+      # bringing it back. Cost, eyes open: the detection window for a dead
+      # CURRENT member grows to ~3-5m worst-case (urltest still cannot fail
+      # over past a frozen member until #4256 anyway, and the net-observer
+      # probes watch the fleet independently every 15s).
+      interval = "3m";
       # Switch only when another member beats the current one by >150ms. 50ms
       # was a hair-trigger: with interrupt_exist_connections every switch tears
       # down live flows, and under host load (2026-07-24) probe jitter alone
