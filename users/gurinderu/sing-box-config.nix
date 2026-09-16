@@ -497,35 +497,37 @@ in
       # observer logs show sel pinned to the first entry through every storm,
       # including the 8.5h outage of 2026-07-27.
       #
-      # Be precise about what the ordering buys: it does NOT restore
-      # incident-time failover (only pinning past #4256 or a fallback-style
-      # group would), it only picks WHICH node the group freezes on.
+      # gRPC-ONLY, and that is the actual fix — not the member order (2026-09-16).
+      # urltest picks the LOWEST-LATENCY member in steady state, so as long as a
+      # TCP/XTLS-Vision node is IN this group, "fastest wins" can land on it and
+      # reopen the connection flood regardless of order — order only decides the
+      # cold-start pick and the frozen-during-incident member (the #4256
+      # history-wipe bug). The only way to GUARANTEE a multiplexed egress is to
+      # leave nothing un-muxed to pick: a gRPC (Xray "gun") backend carries
+      # every logical stream over ONE HTTP/2 connection, while a Vision backend
+      # opens one physical TCP per stream (Vision cannot be muxed — `multiplex`
+      # is incompatible with `flow = xtls-rprx-vision`, which must expose the
+      # real TLS record). Measured on the hostile coworking MikroTik: a Vision
+      # egress held ~300 concurrent connections, 67 to a single server, which
+      # reads as a flood/scan to a per-client connection-limit rule (a phone on
+      # the same SSID stayed up while the laptop's IP was blackholed down to ARP
+      # going incomplete). With only gRPC members here, whatever urltest picks
+      # is muxed.
       #
-      # gRPC members lead, TCP members trail — the connection-footprint fix
-      # (2026-09-16). A gRPC (Xray "gun") backend carries every logical
-      # stream over ONE HTTP/2 connection; a TCP/XTLS-Vision backend opens one
-      # physical TCP per stream (Vision is deliberately un-multiplexed — it
-      # must expose the real TLS record to defeat DPI, so `multiplex` is
-      # incompatible with `flow = xtls-rprx-vision`). Measured on the hostile
-      # coworking MikroTik: the Vision default held ~300 concurrent
-      # connections, 67 to a single server — which reads as a flood/scan to a
-      # per-client connection-limit rule (a phone on the same SSID stayed up
-      # while the laptop's client IP was blackholed down to ARP going
-      # incomplete). Leading with gRPC collapses that to a handful of
-      # connections, so the frozen-during-incident default is also the
-      # connection-frugal one. Trade, eyes open: the frozen default is now the
-      # cleanest gRPC node, not the cleanest node overall, and gRPC costs a
-      # little more per request than raw Vision — accepted, the flood
-      # signature is a liability on every connection-counting middlebox, not
-      # just this venue.
+      # The TCP/Vision nodes (8, 4, 1) are NOT deleted — they move to the
+      # vless-main selector below as a MANUAL fallback (all-gRPC-down, or a
+      # clean fast network where Vision's throughput is worth it). They are not
+      # in any urltest group, so they are never background-probed — no stray
+      # Vision handshakes to re-raise the frequency signature.
       #
-      # Within gRPC, cleanest first: Poland 3 (6, 81.15.150.144 — own IP, no
-      # failure record) leads; then Poland 2 (5, shares the 81.15.150.138 that
-      # flaked 8h on 2026-09-15); then the chronic GHOSTNET 94.103.168.x pair
-      # (2, 3 — night outages, MegaFon-blackholed, the 2026-09-05 EOF storm).
-      # TCP/Vision trails as fallback: Timeweb (8, cleanest TCP), Poland 1 (4),
-      # Germany 1 (1, GHOSTNET) LAST on purpose. Order is global for both
-      # consumers (mac + thinkpad) — same subscription, same fleet.
+      # Order within gRPC still sets the frozen-during-incident default,
+      # cleanest first: Poland 3 (6, 81.15.150.144 — own IP, no failure record),
+      # then Poland 2 (5, shares the 81.15.150.138 that flaked 8h on
+      # 2026-09-15), then the chronic GHOSTNET 94.103.168.x pair (2, 3 — night
+      # outages, MegaFon-blackholed, the 2026-09-05 EOF storm). Fail-closed if
+      # all four are down (no auto egress until a manual flip to a TCP node) —
+      # by design, better than silently flooding. Global for both consumers
+      # (mac + thinkpad): same subscription, same fleet.
       # (Server IPs deliberately not restated here — they are sops-encrypted
       # in sing-box-secrets.nix, and comments in a git-tracked, store-readable
       # file should not undo that.)
@@ -534,9 +536,6 @@ in
         5 # Poland 2, grpc (shares Poland 1's 81.15.150.138)
         2 # Germany 2, grpc (GHOSTNET)
         3 # Germany 3, grpc (GHOSTNET — historically rotten)
-        8 # Timeweb AMS, tcp/Vision — cleanest TCP fallback
-        4 # Poland 1, tcp/Vision
-        1 # Germany 1, tcp/Vision (GHOSTNET — 2026-09-05 EOF storm) — LAST
       ];
       url = "https://www.gstatic.com/generate_204";
       # 3m — the sing-box upstream default; the previous 1m was an
@@ -562,17 +561,23 @@ in
       interrupt_exist_connections = true;
     }
     {
-      # Manual kill-switch. Normally forwards to vless-auto (the auto-failover
-      # group); flip it to block-out via the Clash API to drop ALL proxied
-      # traffic on demand:
+      # Manual kill-switch AND transport fallback. Normally forwards to
+      # vless-auto (the gRPC-only auto group); flip via the Clash API:
       #   curl -X PUT http://127.0.0.1:9090/proxies/vless-main -d '{"name":"block-out"}'
-      # and back with '{"name":"vless-auto"}'. interrupt_exist_connections makes
-      # the switch take effect on in-flight connections immediately. The routing
+      # back with '{"name":"vless-auto"}'. interrupt_exist_connections makes the
+      # switch take effect on in-flight connections immediately. The routing
       # rules and `final` target THIS outbound, so the switch covers everything
-      # that goes through the proxy. Deliberately only vless-auto/block-out — no
-      # direct-out member: the kill-switch stays fail-closed (proxy down => drop,
-      # never leak to direct). Captive portals are handled by the portalDomains
-      # direct rule above, not by flipping this selector.
+      # that goes through the proxy.
+      #
+      # The TCP/Vision nodes (vless-out-8/4/1) are members here as a MANUAL
+      # fallback for when the gRPC fleet is down, or on a clean fast network
+      # where Vision's throughput beats gRPC and connection count doesn't
+      # matter — e.g. `-d '{"name":"vless-out-8"}'`. They are deliberately NOT
+      # in vless-auto (that stays gRPC-only so "fastest wins" can never reopen
+      # the connection flood) and NOT in any urltest group (so they draw no
+      # background Vision handshakes). Still fail-closed: no direct-out member,
+      # so a dead proxy drops rather than leaking to direct. Captive portals
+      # are handled by the portalDomains direct rule above, not here.
       #
       # The choice PERSISTS: cache_file stores selector state, so block-out
       # survives kickstarts, crashes and reboots — the one thing that clears
@@ -588,7 +593,10 @@ in
       type = "selector";
       tag = "vless-main";
       outbounds = [
-        "vless-auto"
+        "vless-auto" # gRPC-only auto group (default)
+        "vless-out-8" # tcp/Vision manual fallback — Timeweb, cleanest
+        "vless-out-4" # tcp/Vision manual fallback — Poland 1
+        "vless-out-1" # tcp/Vision manual fallback — Germany 1 (GHOSTNET)
         "block-out"
       ];
       default = "vless-auto";
