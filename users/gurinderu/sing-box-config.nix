@@ -499,26 +499,44 @@ in
       #
       # Be precise about what the ordering buys: it does NOT restore
       # incident-time failover (only pinning past #4256 or a fallback-style
-      # group would), it only picks WHICH node the group freezes on — so it
-      # leads with the cleanest exit and ends with the GHOSTNET 94.103.168.x
-      # nodes (night outages, TCP-blackholed from MegaFon cellular, the
-      # 2026-09-05 EOF storm). Caveats owned deliberately: the order is
-      # global for both consumers (mac + thinkpad) — same subscription, same
-      # fleet, and the frozen-default logic is platform-independent; and the
-      # new default vless-out-8 is the one member with no subscription-side
-      # replacement path (see its comment above), the trade accepted for it
-      # being the cleanest node.
+      # group would), it only picks WHICH node the group freezes on.
+      #
+      # gRPC members lead, TCP members trail — the connection-footprint fix
+      # (2026-09-16). A gRPC (Xray "gun") backend carries every logical
+      # stream over ONE HTTP/2 connection; a TCP/XTLS-Vision backend opens one
+      # physical TCP per stream (Vision is deliberately un-multiplexed — it
+      # must expose the real TLS record to defeat DPI, so `multiplex` is
+      # incompatible with `flow = xtls-rprx-vision`). Measured on the hostile
+      # coworking MikroTik: the Vision default held ~300 concurrent
+      # connections, 67 to a single server — which reads as a flood/scan to a
+      # per-client connection-limit rule (a phone on the same SSID stayed up
+      # while the laptop's client IP was blackholed down to ARP going
+      # incomplete). Leading with gRPC collapses that to a handful of
+      # connections, so the frozen-during-incident default is also the
+      # connection-frugal one. Trade, eyes open: the frozen default is now the
+      # cleanest gRPC node, not the cleanest node overall, and gRPC costs a
+      # little more per request than raw Vision — accepted, the flood
+      # signature is a liability on every connection-counting middlebox, not
+      # just this venue.
+      #
+      # Within gRPC, cleanest first: Poland 3 (6, 81.15.150.144 — own IP, no
+      # failure record) leads; then Poland 2 (5, shares the 81.15.150.138 that
+      # flaked 8h on 2026-09-15); then the chronic GHOSTNET 94.103.168.x pair
+      # (2, 3 — night outages, MegaFon-blackholed, the 2026-09-05 EOF storm).
+      # TCP/Vision trails as fallback: Timeweb (8, cleanest TCP), Poland 1 (4),
+      # Germany 1 (1, GHOSTNET) LAST on purpose. Order is global for both
+      # consumers (mac + thinkpad) — same subscription, same fleet.
       # (Server IPs deliberately not restated here — they are sops-encrypted
       # in sing-box-secrets.nix, and comments in a git-tracked, store-readable
       # file should not undo that.)
       outbounds = map (n: "vless-out-${toString n}") [
-        8 # Timeweb AMS, tcp — cleanest, the frozen default
-        4 # Poland 1, tcp
-        5 # Poland 2, grpc (shares Poland 1's server)
-        6 # Poland 3, grpc
-        2 # Germany 2, grpc (GHOSTNET, shares Germany 1's server)
-        3 # Germany 3, grpc (GHOSTNET — the historically rotten node)
-        1 # Germany 1, tcp (GHOSTNET — 2026-09-05 EOF storm) — LAST on purpose
+        6 # Poland 3, grpc (81.15.150.144, own IP) — frozen default, muxed
+        5 # Poland 2, grpc (shares Poland 1's 81.15.150.138)
+        2 # Germany 2, grpc (GHOSTNET)
+        3 # Germany 3, grpc (GHOSTNET — historically rotten)
+        8 # Timeweb AMS, tcp/Vision — cleanest TCP fallback
+        4 # Poland 1, tcp/Vision
+        1 # Germany 1, tcp/Vision (GHOSTNET — 2026-09-05 EOF storm) — LAST
       ];
       url = "https://www.gstatic.com/generate_204";
       # 3m — the sing-box upstream default; the previous 1m was an
