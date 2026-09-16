@@ -43,8 +43,8 @@
       url = "github:gurinderu/craft";
       flake = false;
     };
-    # net-observer: the Rust rewrite of the shell net-observer LaunchDaemon
-    # (hosts/mac_aarch64/net-observer.nix). Provides darwinModules.default, which
+    # net-observer: the Mac's network observer daemon (Rust; replaced the
+    # retired shell observer 2026-09-16). Provides darwinModules.default, which
     # owns the launchd job, and packages.<system>.net-observerd. Kept on its own
     # nixpkgs (no `follows`): the daemon's rust-toolchain.toml pins the compiler
     # and libduckdb-sys builds its own DuckDB engine, so pointing it at this
