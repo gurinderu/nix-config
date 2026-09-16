@@ -525,14 +525,15 @@ in
       # unexplained 3x-override. A per-minute beacon means a fresh REALITY
       # handshake to all 7 endpoints every 60s (no multiplex) — exactly the
       # "frequency" leg of the ASN+JA3+frequency triad this config claims to
-      # break, and the 2026-09-16 bisection on the hostile coworking network
-      # pointed at sing-box's traffic pattern as the ban trigger: bans every
-      # 2-4 min with sing-box up (phases A/B/D), zero incidents in the
-      # window with it unloaded (phase C), first router action ~2 min after
-      # bringing it back. Cost, eyes open: the detection window for a dead
-      # CURRENT member grows to ~3-5m worst-case (urltest still cannot fail
-      # over past a frozen member until #4256 anyway, and the net-observer
-      # probes watch the fleet independently every 15s).
+      # break. (NB the 2026-09-16 coworking bisection initially blamed this
+      # beacon for the ban cycle; that verdict was RETRACTED the same day —
+      # the real cause was macOS roaming between the venue's twin 5G/6G
+      # SSIDs with per-SSID Private Wi-Fi MACs, i.e. a fresh DHCP identity
+      # every roam. The 3m change stands on the frequency-signature argument
+      # alone.) Cost, eyes open: the detection window for a dead CURRENT
+      # member grows to ~3-5m worst-case (urltest still cannot fail over
+      # past a frozen member until #4256 anyway, and the net-observer probes
+      # watch the fleet independently every 15s).
       interval = "3m";
       # Switch only when another member beats the current one by >150ms. 50ms
       # was a hair-trigger: with interrupt_exist_connections every switch tears
