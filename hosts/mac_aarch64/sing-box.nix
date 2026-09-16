@@ -44,8 +44,8 @@ let
   stateDir = "/var/lib/sing-box";
   logPath = "/var/log/sing-box.log";
 
-  # Resolved label of the main daemon, read back from the config (the same
-  # can-never-drift rationale as net-observer.nix): the reload/netreload
+  # Resolved label of the main daemon, read back from the config so the two
+  # can never drift: the reload/netreload
   # daemons and the postActivation kickstart below all target this label,
   # and a hardcoded copy would survive a rename as helpers kicking a
   # nonexistent job.
@@ -185,11 +185,12 @@ let
   # so launchd's append-mode fd keeps writing to the same inode (no reopen needed,
   # which launchd can't do anyway). rotate+compress cap total disk; old rotations
   # past the count are deleted automatically.
-  # /var/log/net-observer.log and /var/log/dns-fallback.log are written by the
-  # net-observer and dns-fallback daemons (./net-observer.nix, ./dns-fallback.nix);
-  # they share this rotation so no second logrotate daemon is needed. Keep the
-  # paths in sync with those modules. Same deal for the Rust observer's
-  # net-observerd.log (its darwin module sets the path but rotates nothing),
+  # /var/log/dns-fallback.log is written by the dns-fallback daemon
+  # (./dns-fallback.nix); it shares this rotation so no second logrotate
+  # daemon is needed. Keep the paths in sync with that module. Same deal for
+  # the Rust observer's net-observerd.log (its darwin module sets the path
+  # but rotates nothing), the retired shell observer's net-observer.log
+  # (removed 2026-09-16; kept in the list until the old file ages out),
   # netbird's launchd stdout/stderr sinks (netbird rotates its own client.log
   # but launchd-owned append fds are outside its reach — and with RunAtLoad
   # the retry loops write them continuously), and the nix-gc/nix-optimise

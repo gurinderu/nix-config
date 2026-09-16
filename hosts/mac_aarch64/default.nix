@@ -41,23 +41,19 @@ nix-darwin.lib.darwinSystem {
           ];
         };
     }
-    # net-observerd: the Rust rewrite of the shell observer. It runs ALONGSIDE
-    # hosts/mac_aarch64/net-observer.nix, deliberately — that shell daemon is the
-    # behavioural oracle the rewrite is checked against, and its watchdog
-    # kickstart is still the only auto-recovery on this machine. Retiring it is a
-    # separate, later step, and not before an acting handler replaces the
-    # watchdog. NB the acting bar moved on 2026-09-05: the shell watchdog now
-    # also carries an escalating kick backoff (5→60 min, reset on healthy tun),
-    # a job-gone detector (`launchctl print` says the sing-box service is
-    # missing → bootstrap it back), and a BTM-failure notification — the Rust
-    # acting handler must cover those too before the shell daemon can retire
-    # (its current trigger engine implements only the flat 5-min backoff).
-    #
-    # The two must not share a log: the module's logFile therefore defaults to
-    # /var/log/net-observerd.log while the shell daemon keeps
-    # /var/log/net-observer.log. launchd opens StandardOutPath itself and two jobs
-    # pointed at one file interleave, which would corrupt the very record the
-    # migration is being judged against.
+    # net-observerd: THE observer on this machine. The shell observer it was
+    # being trialled against (hosts/mac_aarch64/net-observer.nix) was removed
+    # on 2026-09-16 by the owner's call, BEFORE the Rust daemon grew an
+    # acting handler — so until it does, this host has NO runtime
+    # auto-recovery: no wedge-kickstart of sing-box, no between-switches
+    # job-gone bootstrap, no BTM notification. The only remaining repair is
+    # the activation-time sweep in ./user-agents.nix (fires on darwin-rebuild
+    # switch). The acting bar the Rust handler has to meet is recorded in the
+    # porting backlog handed to the net-observer repo: wedge signature (tun
+    # dead + direct alive, 3 ticks) gated on load1 < 16 and on the manual
+    # kill-switch selector, escalating kick backoff (5→60 min, persisted,
+    # reset on healthy tun), job-gone bootstrap from the current generation's
+    # plist, BTM error-5 detection + console-user notification.
     inputs.net-observer.darwinModules.default
     (
       {
@@ -95,15 +91,14 @@ nix-darwin.lib.darwinSystem {
           # sing-box's Clash API exposes only the groups the config declares
           # — the upstream default GLOBAL (clash-core convention) 404s here
           # and the selector column reads "-". vless-auto is the urltest
-          # group whose `now` names the active node (same group the shell
-          # observer's sel= column polls).
+          # group whose `now` names the active node.
           [collectors.proxy]
           selector_group = "vless-auto"
         '';
         # The module sets no QoS band, and this daemon's DuckDB record is the
-        # forensic oracle the migration is judged against — under a build
-        # storm (Background QoS since 2026-09-05) it must keep observing, same
-        # reasoning as the shell observer's ProcessType in net-observer.nix.
+        # forensic record of this host's incidents — under a build storm
+        # (Background QoS since 2026-09-05) it must keep observing rather
+        # than starve in the Background band with the storm it is measuring.
         launchd.daemons.net-observerd.serviceConfig.ProcessType = "Interactive";
 
         # The module wires only the daemon; net-observer-cli (status,
