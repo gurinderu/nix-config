@@ -107,6 +107,19 @@
     # there if substitutions start dying mid-transfer again.
     http-connections = 8;
 
+    # net-observer's binary cache: upstream CI (aarch64-darwin, the input's
+    # own nixpkgs — no follows, so store paths match this host) pushes
+    # net-observerd / net-observer-cli / net-observer-bar from main. Without
+    # it the first crate2nix rebuild here was a cold hour (DuckDB built
+    # twice, the gpui video crates). extra-*, not the bare settings, so
+    # cache.nixos.org and its key stay from the defaults. Key verified
+    # against https://app.cachix.org/api/v1/cache/net-observer. Falsifier
+    # for a working cache: the switch log shows "copying path … from
+    # 'https://net-observer.cachix.org'" and no building lines for those
+    # packages.
+    extra-substituters = [ "https://net-observer.cachix.org" ];
+    extra-trusted-public-keys = [ "net-observer.cachix.org-1:uj6DodDx9CGT+XsIJmydU6kcECF82kHhJ+q9ZMCmx8w=" ];
+
     # Build parallelism cap. nix's default ("use everything") stacked on top
     # of cargo/IDE/VM load repeatedly drove load1 into the hundreds on this
     # fanless 8-core M2 Air (2026-09-02..05: peaks 200-400, nightly
