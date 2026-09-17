@@ -376,11 +376,11 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1789602019,
-        "narHash": "sha256-shWv6mKJF2U86aD+1IZnXfOeOpsftmBolAozpR8M0SY=",
+        "lastModified": 1789603782,
+        "narHash": "sha256-/TXe/ns70LN13otF+50judtvb1K0TApJJsoIw6aXAMU=",
         "owner": "gurinderu",
         "repo": "net-observer",
-        "rev": "7dbae4d817d10141252233702949b8a6d7d7f988",
+        "rev": "e80b75f1c53b61d3599a536cb38dacc65b4a37d3",
         "type": "github"
       },
       "original": {
