@@ -31,6 +31,12 @@ nix-darwin.lib.darwinSystem {
       home-manager.extraSpecialArgs = {
         inherit inputs pkgs-unstable sops-nix;
         inherit (inputs) nix-colors;
+        # This machine's physical uplink interface. A MACHINE fact, so it lives
+        # in the host, not the user config; users/gurinderu/sing-box.nix threads
+        # it into sing-box's `default_interface` so egress is pinned to Wi-Fi and
+        # never grabs the tailscale/netbird utun (the "no route to internet"
+        # wedge measured 2026-09-17). This Mac's Wi-Fi is always en0.
+        uplinkInterface = "en0";
       };
       home-manager.users.gurinderu =
         { pkgs, ... }:

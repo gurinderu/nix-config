@@ -2,6 +2,10 @@
   pkgs,
   lib,
   config,
+  # This machine's uplink interface, threaded from the host
+  # (hosts/mac_aarch64/default.nix → home-manager.extraSpecialArgs). sing-box's
+  # egress is pinned to it; see the defaultInterface doc in sing-box-config.nix.
+  uplinkInterface,
   ...
 }:
 let
@@ -9,7 +13,7 @@ let
 
   singBoxConfig = pkgs.writeTextFile {
     name = "sing-box-config.json";
-    text = builtins.toJSON (import ./sing-box-config-darwin.nix);
+    text = builtins.toJSON (import ./sing-box-config-darwin.nix { inherit uplinkInterface; });
   };
 
   # One substitution spec per (server, field), generated from the shared
