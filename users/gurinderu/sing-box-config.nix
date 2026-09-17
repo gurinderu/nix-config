@@ -63,6 +63,18 @@
   clashApi ? false,
   logLevel ? "warn",
   dnsListen ? null,
+  # When null (the default, and the thinkpad's choice), sing-box AUTO-detects
+  # the outbound interface. When set to an interface name, sing-box binds every
+  # outbound to THAT interface instead. The Mac pins it to its Wi-Fi ("en0")
+  # because auto-detect there resolves to a competing default route another VPN
+  # installs through its own utun (measured 2026-09-17: tailscale's utun carried
+  # a second `default`, and sing-box's auto-detect latched it → every proxied
+  # dial died with "no route to internet", surviving restart and reboot because
+  # tailscale reinstalls the route). Pinning en0 makes sing-box always egress
+  # via Wi-Fi and never grab a tunnel interface. Caveat, deliberate: this Mac's
+  # Wi-Fi is always en0, but a USB-ethernet dongle would NOT be used for egress
+  # while pinned — change this value if the dongle becomes the uplink.
+  defaultInterface ? null,
 }:
 let
   # Per-server transport map (structural, non-secret). See sing-box-secrets.nix.
@@ -243,7 +255,8 @@ in
         # With no inet6_range, AAAA queries return NOERROR with an empty answer
         # (measured), so clients go straight to v4 with no fallback delay.
         # `strategy = "ipv4_only"` on the catch-all rule was tested too and is
-        # redundant — identical empty-AAAA result, so it is not carried here.
+        # redundant for THIS server — identical empty-AAAA result. The global
+        # `dns.strategy` below exists for the other servers, see there.
         #
         # Stale fc00:: entries in the store_fakeip cache.db are NOT a concern:
         # replaying the old cache against this config was measured to return an
@@ -400,6 +413,23 @@ in
         server = "fakeip";
       }
     ];
+    # No AAAA from ANY server. The fakeip server already answers AAAA empty
+    # (no inet6_range, see above), but every rule that must return REAL
+    # addresses — yandex for geosite-category-ru and the captive/portal hosts,
+    # `local` for tailscale.com and the mesh names, MagicDNS for ts.net, plus
+    # whatever a host adds via extraDnsRules — forwarded the upstream AAAA
+    # untouched, and there is nothing to carry it: the TUN is v4-only on every
+    # host (see inet6_range above) and the Linux host has no v6 default route
+    # at all — its only v6 route is the tailscale /128 (measured 2026-09-17:
+    # `getent ahostsv6 ya.ru` -> 2a02:6b8::2:242 via yandex, `ping -6 ya.ru`
+    # -> "Network is unreachable", while ping -4 / curl stay fine, so a
+    # v6-preferring client hangs or fails on exactly the RU/direct names).
+    # Same premise as dropping inet6_range: no v6 routing here, so never hand
+    # out an address that needs it. Global rather than per rule so a new
+    # real-IP rule cannot reopen the hole. Per-server `strategy` no longer
+    # exists in the 1.12+ server format — this and the rule-level field are
+    # the only two places it can live.
+    strategy = "ipv4_only";
   };
   inbounds = [
     (
@@ -718,14 +748,22 @@ in
         update_interval = "24h";
       }
     ];
-    auto_detect_interface = true;
     default_domain_resolver = "google";
     # Default everything through the VPN; direct rules above are the
     # exceptions. Blocked-in-Russia resources thus also go via the VPN.
     # vless-main is the kill-switch selector wrapping vless-auto (fastest
     # backend, with the RU node as last-resort fallback).
     final = "vless-main";
-  };
+  }
+  # Egress interface: exactly one of these keys is emitted (they are
+  # alternatives in sing-box), so a null default_interface never reaches the
+  # JSON. See the defaultInterface parameter doc above.
+  // (
+    if defaultInterface == null then
+      { auto_detect_interface = true; }
+    else
+      { default_interface = defaultInterface; }
+  );
   # Localhost-only Clash API control port (macOS only — see clashApi). Used to
   # flip the vless-main kill-switch at runtime (see its outbound comment) and to
   # inspect/select outbounds from a Clash dashboard. Bound to 127.0.0.1 so it is

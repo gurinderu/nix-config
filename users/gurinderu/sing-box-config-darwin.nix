@@ -1,5 +1,11 @@
 # macOS-specific sing-box config: fills the platform holes in ./sing-box-config.nix.
 # Imported by users/gurinderu/sing-box.nix (home-manager activation writer).
+#
+# `uplinkInterface` is a MACHINE fact (this Mac's Wi-Fi is en0), so it is not
+# hardcoded here — it is threaded in from the host (hosts/mac_aarch64/default.nix
+# via home-manager.extraSpecialArgs) and passed to the shared config as
+# `defaultInterface`. See the defaultInterface doc in ./sing-box-config.nix.
+{ uplinkInterface }:
 import ./sing-box-config.nix {
   # On macOS the Tailscale daemon is the system network-extension, not the
   # `tailscaled` binary that exists on Linux. `Tailscale` is the GUI app.
@@ -128,6 +134,14 @@ import ./sing-box-config.nix {
   # locally instead of being flung at the gateway. Single source of truth for the
   # address, shared with networking.dns — a mismatch kills DNS outright.
   dnsListen = import ./dns-pin.nix;
+
+  # Pin sing-box's egress to the machine's uplink (threaded from the host).
+  # Auto-detect latches onto the second `default` route tailscale installs
+  # through its own utun, so every proxied dial dies with "no route to
+  # internet" (measured 2026-09-17; survived restart and reboot because
+  # tailscale reinstalls the route). See the defaultInterface doc in
+  # ./sing-box-config.nix, including the USB-dongle caveat.
+  defaultInterface = uplinkInterface;
 
   # Persist the fakeip table across restarts. The launchd daemon
   # (hosts/mac_aarch64/sing-box.nix) runs as root and creates this dir before
