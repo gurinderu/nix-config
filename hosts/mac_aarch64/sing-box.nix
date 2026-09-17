@@ -433,5 +433,28 @@ in
           || echo "warning: could not kickstart sing-box (not loaded yet?)" >&2
       fi
     fi
+    # Wedge guard. The freshness check above only fires on a config change, so
+    # a sing-box that is alive but whose TUN has stalled (the interface-monitor
+    # wedge that follows a burst of network switches — process up, tun dead,
+    # underlay fine) is NOT restarted by a plain rebuild, and normally waits on
+    # the net-observer watchdog to kick it. But a `darwin-rebuild switch` is an
+    # explicit operator action, and the operator running it while the tunnel is
+    # down almost certainly wants it fixed now, not in ~45s — and the watchdog
+    # may itself be absent (a manual bootout that this same activation's sweep
+    # is only now restoring). So probe the tunnel and kick a wedged process
+    # directly. Bounded (-m5). Only kicks when the tunnel is actually not
+    # passing traffic, so a healthy switch never restarts it; an unnecessary
+    # kick during a real outage costs one restart, harmless on this non-hot
+    # activation path. 204 is the generate_204 success code the whole stack
+    # keys on.
+    if [ -e ${stateDir}/started ]; then
+      code=$(/usr/bin/curl -m5 -s -o /dev/null -w '%{http_code}' \
+        https://www.gstatic.com/generate_204 2>/dev/null)
+      if [ "$code" != 204 ]; then
+        echo "sing-box: tunnel probe returned '$code' at activation; kickstarting a possibly-wedged process" >&2
+        /bin/launchctl kickstart -k system/${singBoxLabel} \
+          || echo "warning: could not kickstart sing-box (not loaded yet?)" >&2
+      fi
+    fi
   '';
 }

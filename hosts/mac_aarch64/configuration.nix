@@ -118,7 +118,9 @@
     # 'https://net-observer.cachix.org'" and no building lines for those
     # packages.
     extra-substituters = [ "https://net-observer.cachix.org" ];
-    extra-trusted-public-keys = [ "net-observer.cachix.org-1:uj6DodDx9CGT+XsIJmydU6kcECF82kHhJ+q9ZMCmx8w=" ];
+    extra-trusted-public-keys = [
+      "net-observer.cachix.org-1:uj6DodDx9CGT+XsIJmydU6kcECF82kHhJ+q9ZMCmx8w="
+    ];
 
     # Build parallelism cap. nix's default ("use everything") stacked on top
     # of cargo/IDE/VM load repeatedly drove load1 into the hundreds on this
