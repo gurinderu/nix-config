@@ -165,6 +165,58 @@
       # "platform mismatch" on a darwin-only patch drv). Discarding keeps
       # exactly what we want — computing the string still forces the full
       # darwin module eval — while the check's own build stays one echo.
+      # The net-observer input is deliberately NOT on `follows` (see the input
+      # comment), which leaves a failure mode nothing else catches: `nix flake
+      # update net-observer` bumps the input's own rev but keeps THIS lock's
+      # old transitive pins (nixpkgs, rust-overlay, crate2nix, …), while the
+      # upstream CI builds and pushes to cachix with the pins in net-observer's
+      # OWN flake.lock. Different nixpkgs → different drv hashes → cachix never
+      # hits, every switch rebuilds the ~30-min Rust closure on the fanless Mac,
+      # and `nix path-info --sigs` shows `ultimate` (built locally) instead of a
+      # cache signature. This check compares our locked pins for net-observer's
+      # inputs against the flake.lock inside the fetched input itself and fails
+      # on any drift. Re-sync = drop the net-observer node and its transitive
+      # nodes from flake.lock, then `nix flake lock` (done 2026-09-18). The
+      # comparison happens at instantiation (env var), the failure at build
+      # time — a drifted lock still evaluates, so `nix flake show` and darwin
+      # switches keep working while the gate goes red.
+      checks.x86_64-linux.net-observer-lock-sync =
+        let
+          lib = nixpkgs.lib;
+          ourLock = builtins.fromJSON (builtins.readFile "${self}/flake.lock");
+          theirLock = builtins.fromJSON (builtins.readFile "${inputs.net-observer}/flake.lock");
+          ourInputs = ourLock.nodes.${ourLock.nodes.root.inputs.net-observer}.inputs or { };
+          theirInputs = theirLock.nodes.root.inputs;
+          # An input value is a node key (string) or a `follows` path (list).
+          revOf =
+            lock: v:
+            if builtins.isString v then
+              lock.nodes.${v}.locked.rev or lock.nodes.${v}.locked.narHash or "?"
+            else
+              "follows:${lib.concatStringsSep "/" v}";
+          allNames = lib.unique (builtins.attrNames ourInputs ++ builtins.attrNames theirInputs);
+          lineFor =
+            name:
+            let
+              ours = if ourInputs ? ${name} then revOf ourLock ourInputs.${name} else "MISSING";
+              theirs = if theirInputs ? ${name} then revOf theirLock theirInputs.${name} else "MISSING";
+            in
+            lib.optional (ours != theirs) "  ${name}: ours=${ours} upstream=${theirs}";
+        in
+        nixpkgs.legacyPackages.x86_64-linux.runCommand "net-observer-lock-sync"
+          {
+            mismatchReport = lib.concatStringsSep "\n" (lib.concatMap lineFor allNames);
+          }
+          ''
+            if [ -n "$mismatchReport" ]; then
+              echo "net-observer transitive pins drifted from its own flake.lock:" >&2
+              echo "$mismatchReport" >&2
+              echo "re-lock: drop the net-observer nodes from flake.lock, then nix flake lock" >&2
+              exit 1
+            fi
+            touch $out
+          '';
+
       checks.x86_64-linux.mac-system-eval =
         nixpkgs.legacyPackages.x86_64-linux.runCommand "mac-system-eval"
           {
