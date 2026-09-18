@@ -96,10 +96,22 @@ nix-darwin.lib.darwinSystem {
 
           # sing-box's Clash API exposes only the groups the config declares
           # — the upstream default GLOBAL (clash-core convention) 404s here
-          # and the selector column reads "-". vless-auto is the urltest
-          # group whose `now` names the active node.
+          # and the selector column reads "-". vless-main is the TOP
+          # selector (the manual kill-switch routing `final` targets); the
+          # daemon descends `now` through nested groups since 369e465, so
+          # watching the top group surfaces BOTH a manual flip (block-out /
+          # a Vision fallback node) and the urltest pick under vless-auto.
+          # Watching vless-auto directly (the pre-descent workaround) went
+          # blind to exactly the flip case the observer exists to catch.
           [collectors.proxy]
-          selector_group = "vless-auto"
+          selector_group = "vless-main"
+          # MUST equal the urltest group's `interval` in sing-box's config
+          # (users/gurinderu/sing-box-config.nix: interval = "3m"): the
+          # endpoint-dial-stall rule waits 2 × interval + 30 s of test-
+          # history absence before calling a node's test dead. 180 is also
+          # the daemon default — written out to keep the coupling visible
+          # next to the sing-box value it must track.
+          urltest_interval_secs = 180
         '';
         # The module sets no QoS band, and this daemon's DuckDB record is the
         # forensic record of this host's incidents — under a build storm
