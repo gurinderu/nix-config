@@ -112,6 +112,21 @@ nix-darwin.lib.darwinSystem {
           # the daemon default — written out to keep the coupling visible
           # next to the sing-box value it must track.
           urltest_interval_secs = 180
+
+          # The tier the daemon BOOTS into. Upstream's absent-key default is
+          # passive — nothing on the wire until the operator presses — which
+          # on this host painted the menu-bar icon permanently grey: every
+          # link/proxy/dns probe is withheld and lands as SKIP, and SKIP
+          # carries no colour (observed 2026-09-18, "значок серый, хотя инет
+          # есть"). The owner wants the icon to answer "is the network up"
+          # at a glance: green needs verdicts, verdicts need probes, so this
+          # host opts into active probing at boot. The cost is the observer's
+          # own probe traffic (gw ping / 204 fetches every 15 s) on whatever
+          # network the Mac sits on — accepted; the shell observer probed at
+          # this cadence for months. Runtime flips (`net-observer-cli probe
+          # passive`) still work and win until the next daemon restart.
+          [probing]
+          default = "active"
         '';
         # The module sets no QoS band, and this daemon's DuckDB record is the
         # forensic record of this host's incidents — under a build storm
