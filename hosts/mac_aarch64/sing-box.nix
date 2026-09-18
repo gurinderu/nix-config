@@ -276,21 +276,57 @@ in
   # orphaned old one and never fires — the daemon then served a stale config until
   # a manual kickstart (observed 2026-07-15: reject rule rendered but not loaded).
   # The rename mutates the containing directory's vnode, which the directory watch
-  # catches reliably. Trade-off: the renderer's mktemp also touches the directory,
-  # so a render fires the watch twice (temp create, then rename) and every switch
-  # that re-renders restarts sing-box even if the content is unchanged — a ~1s TUN
-  # blip the lsof-on-cache.db guard already tolerates. ThrottleInterval collapses
-  # the double-fire; the pending rename event still relaunches after it, so the
-  # final kickstart reads the new config.
+  # catches reliably. The renderer's mktemp also touches the directory, so a
+  # render fires the watch twice (temp create, then rename); ThrottleInterval
+  # collapses the pair, and the pending rename event still relaunches after it,
+  # so the final run reads the new config.
+  #
+  # The kickstart is gated on the config CONTENT actually having changed since
+  # the last applied kickstart. The unconditional version restarted sing-box on
+  # every directory event, and every darwin-rebuild switch / generation flip
+  # re-renders config.json even when the bytes are identical — on 2026-09-17
+  # (the Go-toolchain bisection day, generations 74/75/76 flipped repeatedly)
+  # that summed to ~25 restarts in 18:37–21:55, each one tearing down and
+  # re-creating the TUN for minutes of fail-closed "no route to internet".
+  # A restart is the ONLY way to apply a config here — sing-box has no hot
+  # reload (SIGHUP does not re-read the config; its clash_api PUT /configs is a
+  # compatibility no-op) — so the fix is to skip the restart when there is
+  # nothing to apply, not to reload more gently.
+  #
+  # Mechanics: hash config.json (atomic rename means the hash always sees a
+  # complete old or new file, never a torn write) and compare with the hash
+  # recorded after the last successful kickstart. The state lives in /var/run
+  # (root-only tmpfs, cleared at boot — a post-boot fire may thus kickstart
+  # once redundantly, which the boot-fresh daemon absorbs). The state is
+  # written only AFTER launchctl succeeds: a failed kickstart leaves the old
+  # hash in place so the next fire retries instead of wedging on "already
+  # applied". If the config is missing/unreadable the hash comes up empty and
+  # we fall through to the kickstart — the safe default this gate replaces.
+  # Everything used is on the always-mounted system volume (same discipline as
+  # netreload below), so no wait4path/nix dependency.
   launchd.daemons.sing-box-reload.serviceConfig = {
     ProgramArguments = [
-      "/bin/launchctl"
-      "kickstart"
-      "-k"
-      "system/${singBoxLabel}"
+      "/bin/sh"
+      "-c"
+      ''
+        cfg=${configPath}
+        state=/var/run/sing-box-reload.hash
+        new=$(/sbin/md5 -q "$cfg" 2>/dev/null || :)
+        old=$(/bin/cat "$state" 2>/dev/null || :)
+        if [ -n "$new" ] && [ "$new" = "$old" ]; then
+          exit 0
+        fi
+        /bin/launchctl kickstart -k system/${singBoxLabel} \
+          && printf '%s' "$new" > "$state"
+      ''
     ];
     WatchPaths = [ configDir ];
-    ThrottleInterval = 3;
+    # 15s, up from 3: with the content gate a redundant fire is a no-op, so a
+    # longer throttle costs nothing on the skip path (the FIRST fire after a
+    # quiet period is never throttled), and it debounces bursts of real
+    # renders during switch iteration — worst case a change landing inside
+    # the window applies up to 15s late.
+    ThrottleInterval = 15;
     # No RunAtLoad: the main daemon starts itself at boot; this one should fire
     # only on subsequent config changes.
     RunAtLoad = false;
