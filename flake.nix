@@ -101,6 +101,17 @@
           { };
       packages.x86_64-linux.rtk = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/rtk { };
 
+      # The CVE snapshot net-observer's neighbour scanner reads on the Mac
+      # (see pkgs/cve-snapshot). Exposed on both systems so the unpack recipe
+      # is buildable/testable off-Mac (`nix build .#cve-snapshot`); the darwin
+      # host consumes it via callPackage in hosts/mac_aarch64/default.nix.
+      packages.aarch64-darwin.cve-snapshot =
+        nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/cve-snapshot
+          { };
+      packages.x86_64-linux.cve-snapshot =
+        nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/cve-snapshot
+          { };
+
       darwinConfigurations."mac_aarch64" = import ./hosts/mac_aarch64 {
         inherit
           inputs
