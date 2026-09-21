@@ -99,9 +99,22 @@ in
     #      shipped straight to the daemon, which only rejected it opaquely at
     #      reload. `sing-box check` fails the activation and leaves the last-good
     #      config in place instead.
+    #
+    # And a fourth, closed 2026-09-18: the temp file used to be created INSIDE
+    # $CONFIG_DIR, and the install was unconditional. hosts/mac_aarch64/sing-box.nix
+    # restarts sing-box via a launchd WatchPaths on that DIRECTORY, so every
+    # activation produced two directory events (mktemp create, then the rename)
+    # and two kill+relaunch cycles of the daemon — each a full TUN teardown with
+    # minutes of "no route" for the user — even when the rendered bytes were
+    # identical to the file already in place (launchd.log 2026-09-17: reload
+    # pairs 3-4 s apart at 21:29, 21:32, 21:54, 22:39, 22:40, every one on an
+    # unchanged config). Hence: mktemp in the PARENT directory (same volume, so
+    # rename(2) stays atomic; the parent is not watched), and cmp(1) against the
+    # live file first — identical content leaves the directory untouched and
+    # sing-box running. A real change now fires the watch exactly once.
     render_config() {
       local tmp
-      tmp=$(${pkgs.coreutils}/bin/mktemp "$CONFIG_DIR/.config.json.XXXXXX")
+      tmp=$(${pkgs.coreutils}/bin/mktemp "$CONFIG_DIR/../.sing-box-config.XXXXXX")
       ${pkgs.gnused}/bin/sed "''${SED_ARGS[@]}" ${singBoxConfig} > "$tmp"
       chmod 600 "$tmp"
       if ! ${pkgs.sing-box}/bin/sing-box check -c "$tmp" 2>&1; then
@@ -114,6 +127,11 @@ in
         echo "sing-box: unsubstituted SING_BOX_ placeholder in rendered config - aborting" >&2
         rm -f "$tmp"
         exit 1
+      fi
+      if [ -f "$CONFIG_DIR/config.json" ] && ${pkgs.diffutils}/bin/cmp -s "$tmp" "$CONFIG_DIR/config.json"; then
+        rm -f "$tmp"
+        echo "sing-box: config.json unchanged - not touching it (no reload)"
+        return 0
       fi
       mv -f "$tmp" "$CONFIG_DIR/config.json"
     }
