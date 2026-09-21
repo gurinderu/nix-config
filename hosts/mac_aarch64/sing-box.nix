@@ -276,10 +276,11 @@ in
   # orphaned old one and never fires — the daemon then served a stale config until
   # a manual kickstart (observed 2026-07-15: reject rule rendered but not loaded).
   # The rename mutates the containing directory's vnode, which the directory watch
-  # catches reliably. The renderer's mktemp also touches the directory, so a
-  # render fires the watch twice (temp create, then rename); ThrottleInterval
-  # collapses the pair, and the pending rename event still relaunches after it,
-  # so the final run reads the new config.
+  # catches reliably. The renderer (users/gurinderu/sing-box.nix render_config)
+  # keeps its temp file OUTSIDE this directory and does not install a
+  # byte-identical config at all (2026-09-18), so a real change fires the watch
+  # exactly once and an unchanged one not at all; the content gate below is the
+  # second layer for any other writer or a post-boot fire.
   #
   # The kickstart is gated on the config CONTENT actually having changed since
   # the last applied kickstart. The unconditional version restarted sing-box on
