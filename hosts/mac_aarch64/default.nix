@@ -127,6 +127,16 @@ nix-darwin.lib.darwinSystem {
           # passive`) still work and win until the next daemon restart.
           [probing]
           default = "active"
+
+          # The local CVE snapshot the neighbour scanner's `cve` rung matches
+          # banners against (pkgs/cve-snapshot: pinned cvelistV5 tree + CISA
+          # KEV). Without it the rung is dropped and `vulns` stays empty. A
+          # store path on purpose: the daemon only reads it, the toml
+          # reference pulls it into the system closure, and updating =
+          # re-pinning the package. First switch downloads ~600 MB and
+          # unpacks ~500k JSONs once.
+          [collectors.neighbors]
+          cve_snapshot_dir = "${pkgs.callPackage ../../pkgs/cve-snapshot { }}"
         '';
         # The module sets no QoS band, and this daemon's DuckDB record is the
         # forensic record of this host's incidents — under a build storm
