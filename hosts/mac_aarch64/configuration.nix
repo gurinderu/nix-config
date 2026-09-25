@@ -11,6 +11,7 @@
     ./netbird.nix
     ./user-agents.nix
     ./btm-check.nix
+    ./socktainer.nix
   ];
 
   # Pin system DNS to the address sing-box's own DNS listener answers on — an

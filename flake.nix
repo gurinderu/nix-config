@@ -101,6 +101,14 @@
           { };
       packages.x86_64-linux.rtk = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/rtk { };
 
+      # socktainer (Docker API over Apple Container) — repack of upstream's
+      # prebuilt release binary; the mac host runs it as a launchd agent via
+      # callPackage in hosts/mac_aarch64/socktainer.nix. Exposed so
+      # `nix build .#socktainer` works on the Mac.
+      packages.aarch64-darwin.socktainer =
+        nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/socktainer
+          { };
+
       # The CVE snapshot net-observer's neighbour scanner reads on the Mac
       # (see pkgs/cve-snapshot). Exposed on both systems so the unpack recipe
       # is buildable/testable off-Mac (`nix build .#cve-snapshot`); the darwin

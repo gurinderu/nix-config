@@ -199,28 +199,17 @@ nix-darwin.lib.darwinSystem {
       };
       homebrew = {
         enable = true;
-        brews = [
-          # Apple Containerization CLI (macOS 26+, Apple Silicon). Each
-          # container gets its own lightweight Linux VM that lives only while
-          # the container runs, so an idle host pays nothing — unlike Colima's
-          # always-on VM reserving 4 CPU / 8 GB. Not in nixpkgs; formula only.
-          #
-          # The brew build is here ONLY as socktainer's declared dependency and
-          # is `brew unlink`ed: socktainer 1.2.1 is compiled against container
-          # 1.2.0 exactly (XPC API), while the tap ships 1.3.1 — with 1.3.1 the
-          # docker API "works" but socktainer never learns container IPs, so
-          # compose inter-service DNS returns NXDOMAIN (observed 2026-09-08).
-          # The version in use is Apple's signed installer pkg for 1.2.0 in
-          # /usr/local/bin (outside brew/nix on purpose). Re-evaluate when
-          # socktainer pins >= 1.3 (its master pinned 1.2.2 on 2026-09-08).
-          "container"
-          # Docker Engine API (v1.51, partial) over Apple container. Registers
-          # a `socktainer` docker context, so the nix-provided docker and
-          # docker-compose clients talk to it: `docker context use socktainer`.
-          # Preview: no pause/commit/top, network connect is a no-op, no static
-          # IPs. Colima stays installed as the fallback for those cases.
-          "socktainer"
-        ];
+        # The container runtime left brew entirely on 2026-09-25: socktainer
+        # is a nix package + launchd agent now (./socktainer.nix,
+        # pkgs/socktainer — including the container-1.2.0-XPC pin story that
+        # used to live here), and the `container` data plane is Apple's signed
+        # 1.2.0 installer pkg in /usr/local/bin (outside brew/nix on purpose).
+        # The brew formulas the old setup left behind uninstall nothing by
+        # being dropped from this list (cleanup = "none" below); remove them
+        # by hand whenever: `brew uninstall socktainer container` — that also
+        # retires the recurring hazard of brew re-linking container 1.3.1 over
+        # the pinned 1.2.0.
+        brews = [ ];
         casks = [
           # Menu bar manager — hides/collapses status icons so they stop
           # disappearing behind the notch. Free Bartender alternative.
