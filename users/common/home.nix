@@ -23,7 +23,7 @@ in
   home.sessionPath = [ "$HOME/.local/bin" ];
 
   programs.starship = import ./starship.nix;
-  programs.zsh = import ./zsh.nix;
+  programs.zsh = import ./zsh.nix { inherit pkgs; };
   programs.neovim = import ./neovim.nix;
   programs.git = import ./git.nix;
   programs.gh = import ./gh.nix;
