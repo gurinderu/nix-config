@@ -89,10 +89,24 @@ in
         # with `--publish-socket <sock>:/run/buildkit/buildkitd.sock` stands
         # in. Only the buildx instance FILE is healed here; the buildkitd
         # container itself is runtime state (`container run -d --name
-        # buildkitd … docker.io/moby/buildkit:buildx-stable-1`, recreate — not
-        # restart — it when builds start failing with "operation not
-        # permitted"; a `container run -d` does not survive reboot, so after
-        # one: `container start buildkitd`).
+        # buildkitd --cpus 2 --memory 4g … docker.io/moby/buildkit:buildx-stable-1`,
+        # recreate — not restart — it when builds start failing with
+        # "operation not permitted"; a `container run -d` does not survive
+        # reboot, so after one: `container start buildkitd`).
+        #
+        # CPU/memory discipline (sing-box lives on this host; measured
+        # starvation history — load 64+ → probe failures): every Apple
+        # container is its own VM and DEFAULTS to 4 CPUs / 1 GiB, and
+        # socktainer 1.2.1 hardcodes that default for docker-created
+        # containers with no limits (the `container system property set
+        # container.cpus` route only lands in socktainer > 1.2.1). What DOES
+        # work today: explicit limits — socktainer 1.2.1 maps docker's
+        # NanoCpus/Memory onto the VM, so `docker run --cpus 2 -m 1g` and
+        # compose `cpus:`/`mem_limit:` are honored. Keep buildkitd at
+        # --cpus 2, and give trading-style compose services explicit cpus:
+        # limits rather than letting each service VM claim the 4-CPU default.
+        # (sing-box itself is shielded launchd-side: ProcessType=Interactive,
+        # Nice=-10 in ./sing-box.nix.)
         #
         # Known wart: the socket sits under /opt/homebrew/var/run — that is
         # ONLY a directory choice made when the builder was first stood up,
