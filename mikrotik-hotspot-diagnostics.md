@@ -4,8 +4,14 @@
 
 This router runs **7.20.8** (2026-02-02) — the tail of the previous long-term
 branch. Released since then: 7.21–7.21.5, 7.22–7.22.3, 7.23–7.23.7
-(18 releases). Current stable = **7.23.7** (2026-09-16); conservative
-option = **7.21.5** (2026-07-03, current long-term branch).
+(18 releases). Current stable = **7.23.7** (2026-09-16); current long-term =
+**7.21.5** (2026-07-03).
+
+**Channel caveat**: the two hotspot fixes below shipped in **7.22**, which
+was a *stable*-channel release (7.23 superseded it). The long-term branch is
+7.21.x and does NOT contain them — an in-channel long-term upgrade
+(7.20.8 → 7.21.5) keeps the deauth behavior. Fixing it by upgrade means
+switching the channel to stable and going to **7.23.7**.
 
 Fixes shipped after 7.20.8 that are directly relevant to hotspot clients
 being deauthorized while L2 stays up:
