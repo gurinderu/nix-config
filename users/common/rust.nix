@@ -53,7 +53,7 @@
     # three concurrent sessions still reach 12 — it halves each session's
     # contribution, nothing more. It also sets concurrency, not QoS or
     # core affinity (macOS schedules by QoS class, so these still land on
-    # P-cores). And nix-built Rust (meridian, net-observerd) never reads
+    # P-cores). And nix-built Rust (net-observerd) never reads
     # this file at all — the cargo hook passes -j $NIX_BUILD_CORES, bounded
     # by nix.settings.cores in hosts/mac_aarch64/configuration.nix, which
     # also carries the QoS half (nix.daemonProcessType = "Background").

@@ -2,7 +2,7 @@
 # in hosts/thinkpad-x1-gen12/sing-box.nix; this is the nix-darwin equivalent.
 #
 # Why a *daemon* (system, root) and not a per-user launchd *agent* like
-# users/gurinderu/meridian.nix: the TUN inbound needs root to create the utun
+# users/common/codebase-memory-ui.nix: the TUN inbound needs root to create the utun
 # interface and install routes via auto_route. Agents run as the logged-in user
 # and cannot do that.
 #

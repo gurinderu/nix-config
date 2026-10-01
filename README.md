@@ -7,6 +7,7 @@
 
 - `mac_aarch64` — Apple Silicon Mac (nix-darwin + home-manager).
 - `thinkpad-x1-gen12` — NixOS host (CI runner pool, sing-box).
+- `cloud-vm` — x86_64-linux cloud VM (standalone home-manager on Ubuntu).
 
 # Install (macOS)
 
@@ -26,4 +27,11 @@ NixOS (thinkpad):
 
 ```
 sudo nixos-rebuild switch --flake .#thinkpad-x1-gen12
+```
+
+Cloud VM (non-NixOS, standalone home-manager):
+
+```
+nix run home-manager/release-26.05 -- switch --flake .#cloud-vm   # first time
+home-manager switch --flake .#cloud-vm
 ```
