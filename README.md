@@ -56,3 +56,14 @@ lingers for hours with its zellij client still attached, and reattaching to
 printf 'ClientAliveInterval 10\nClientAliveCountMax 3\n' | sudo tee /etc/ssh/sshd_config.d/10-keepalive.conf
 sudo sshd -t && sudo systemctl reload ssh
 ```
+
+Accept mosh over tailscale only. Every other default stays `allow`, so the only
+change is that mosh's UDP range is closed outside the tailnet:
+
+```
+sudo ufw default allow incoming
+sudo ufw default allow routed
+sudo ufw allow in on tailscale0 to any port 60000:61000 proto udp
+sudo ufw deny 60000:61000/udp
+sudo ufw --force enable
+```
