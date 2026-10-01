@@ -29,6 +29,9 @@
     # mkDefault so a host that configures programs.ssh itself (the mac, in
     # users/gurinderu/ssh.nix) keeps its own value.
     enable = lib.mkDefault true;
+    # home-manager's implicit `Host *` block is deprecated. Its values were
+    # OpenSSH's own defaults anyway, so opting out changes nothing.
+    enableDefaultConfig = lib.mkDefault false;
     settings."github.com" = {
       HostName = "ssh.github.com";
       Port = 443;
