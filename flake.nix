@@ -24,25 +24,6 @@
     };
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
-    # Meridian: local proxy that exposes the Claude subscription as Anthropic /
-    # OpenAI API endpoints (opencode talks to it on loopback 127.0.0.1:3456).
-    # Our own Rust port — a single static binary built with rustPlatform,
-    # replacing the TypeScript/Bun original (rynfar/meridian). Kept on its own
-    # nixpkgs (no `follows`) so its package builds as pinned. The Rust flake uses
-    # flake-utils.eachDefaultSystem and exposes packages.<system>.default plus an
-    # overlays.default (-> pkgs.meridian); it has no `systems`/home-manager-module
-    # surface, so consumers wire the service themselves (launchd on mac, a
-    # systemd user unit on the thinkpad).
-    meridian.url = "github:gurinderu/meridian";
-    # craft: personal Claude Code / opencode engineering skills, review agents,
-    # and audit/triage workflows. Not a Nix flake (flake = false) — we consume
-    # the repo tree as a store path and symlink its opencode adapter into
-    # ~/.config/opencode (see modules/opencode-craft.nix). Advance with
-    # `nix flake update craft`.
-    craft = {
-      url = "github:gurinderu/craft";
-      flake = false;
-    };
     # net-observer: the Mac's network observer daemon (Rust; replaced the
     # retired shell observer 2026-09-16). Provides darwinModules.default, which
     # owns the launchd job, and packages.<system>.net-observerd. Kept on its own
@@ -56,14 +37,21 @@
     # the config evaluates on any host again. Advance it with
     # `nix flake update net-observer`.
     net-observer.url = "github:gurinderu/net-observer";
-    # verstak: structured-inquiry skill set (github:verstak-ai/skills). Like
-    # craft, not a Nix flake (flake = false) — we consume the repo tree as a
-    # store path and symlink its skills/ dirs into ~/.config/opencode/skills
-    # (see modules/opencode-verstak.nix). Advance with `nix flake update verstak`.
-    verstak = {
-      url = "github:verstak-ai/skills";
-      flake = false;
-    };
+    # nix-claude-code: Anthropic's official prebuilt Claude Code binary,
+    # repacked (fetchurl + autoPatchelf, auto-updater disabled in the wrapper)
+    # and bumped upstream hourly; also offers a stable channel and per-version
+    # pins. Used on cloud-vm. Pure binary repack, so it follows our nixpkgs —
+    # its own unstable pin would only add a lock node.
+    # Advance with `nix flake update nix-claude-code`.
+    nix-claude-code.url = "github:ryoppippi/nix-claude-code";
+    nix-claude-code.inputs.nixpkgs.follows = "nixpkgs";
+    # llm-agents.nix (numtide): packaged AI-agent tooling; we take clauth and
+    # codegraph from it on cloud-vm. Deliberately NOT on `follows`: upstream
+    # tracks nixpkgs-unstable and warns that a stable branch like ours will
+    # break, and its binary cache (cache.numtide.com, configured in
+    # hosts/cloud-vm/home.nix) only hits with its own pin.
+    # Advance with `nix flake update llm-agents`.
+    llm-agents.url = "github:numtide/llm-agents.nix";
   };
 
   outputs =
@@ -244,6 +232,19 @@
                 self.darwinConfigurations."mac_aarch64".system.drvPath;
           }
           ''printf '%s\n' "$macSystemDrv" > $out'';
+
+      homeConfigurations."cloud-vm" = import ./hosts/cloud-vm {
+        inherit inputs nixpkgs home-manager;
+      };
+
+      # Eval coverage for cloud-vm, same shape and reasoning as mac-system-eval:
+      # `nix flake check` does not evaluate homeConfigurations at all, and
+      # building the activation package here would realise the whole closure.
+      checks.x86_64-linux.cloud-vm-eval = nixpkgs.legacyPackages.x86_64-linux.runCommand "cloud-vm-eval" {
+        activationDrv =
+          builtins.unsafeDiscardStringContext
+            self.homeConfigurations."cloud-vm".activationPackage.drvPath;
+      } ''printf '%s\n' "$activationDrv" > $out'';
 
       nixosConfigurations."thinkpad-x1-gen12" = import ./hosts/thinkpad-x1-gen12 {
         inherit

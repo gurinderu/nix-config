@@ -14,8 +14,6 @@
     ./sops.nix
     ./ssh.nix
     ./sing-box.nix
-    ./opencode.nix
-    ./meridian.nix
     ./net-observer-bar.nix
     #./zed.nix
   ];
