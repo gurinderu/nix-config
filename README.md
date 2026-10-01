@@ -47,3 +47,12 @@ Z=$HOME/.nix-profile/bin/zsh
 grep -qxF "$Z" /etc/shells || echo "$Z" | sudo tee -a /etc/shells
 sudo chsh -s "$Z" "$USER"
 ```
+
+Make sshd drop dead connections within ~1 min. Otherwise a dropped ssh session
+lingers for hours with its zellij client still attached, and reattaching to
+`main` from a new login hangs behind it:
+
+```
+printf 'ClientAliveInterval 15\nClientAliveCountMax 4\n' | sudo tee /etc/ssh/sshd_config.d/10-keepalive.conf
+sudo sshd -t && sudo systemctl reload ssh
+```
