@@ -89,6 +89,7 @@ in
     nodejs
     nushell
     mc
+    mosh # servers accept it over tailscale only (see each host's firewall)
     nixd
     pkg-config
     codebase-memory-mcp

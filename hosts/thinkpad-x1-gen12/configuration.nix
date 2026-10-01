@@ -289,6 +289,16 @@
   networking.nftables.enable = false;
   services.tailscale.openFirewall = true;
 
+  # mosh: client and server come from users/common/home.nix. Its UDP range is
+  # open on the tailnet only, so mosh reaches this laptop over tailscale and
+  # nowhere else (ssh itself stays open everywhere, as above).
+  networking.firewall.interfaces.tailscale0.allowedUDPPortRanges = [
+    {
+      from = 60000;
+      to = 61000;
+    }
+  ];
+
   networking.networkmanager.enable = true;
 
   # Copy the NixOS configuration file and link it from the resulting system
