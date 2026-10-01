@@ -15,4 +15,10 @@
   # `BUILDX_BUILDER=socktainer docker build …` (or unset for `docker buildx
   # use` semantics).
   home.sessionVariables.BUILDX_BUILDER = "apple";
+
+  # macOS terminals set LC_CTYPE=UTF-8, and ssh forwards it (SendEnv LC_*).
+  # That name is macOS-only: Linux has no such locale, so remote shells fall
+  # back to ASCII and mosh-server refuses to start. A full locale name means
+  # the same thing here and is valid on both.
+  home.sessionVariables.LC_CTYPE = "en_US.UTF-8";
 }
