@@ -24,9 +24,8 @@ nix-darwin.lib.darwinSystem {
     {
       home-manager.useGlobalPkgs = true;
       home-manager.useUserPackages = true;
-      # Back up (don't clobber) pre-existing files home-manager takes over, e.g.
-      # ~/.config/opencode/package.json left by an earlier opencode run before
-      # opencode-craft.nix managed it. Mirrors the thinkpad host.
+      # Back up (don't clobber) pre-existing files home-manager takes over.
+      # Mirrors the thinkpad host.
       home-manager.backupFileExtension = "bak";
       home-manager.extraSpecialArgs = {
         inherit inputs pkgs-unstable sops-nix;
