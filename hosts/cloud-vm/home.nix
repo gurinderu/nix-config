@@ -20,6 +20,17 @@
     homeDirectory = "/home/ubuntu";
   };
 
+  # Interactive ssh logins land in a persistent zellij session: a dropped
+  # connection reattaches to the same panes on the next login, and leaving
+  # zellij (detach or exit) closes the ssh shell too. Skipped inside zellij,
+  # for `ssh host cmd` (not interactive, so .zshrc never runs) and on dumb
+  # terminals. If zellij itself fails, the plain shell stays as a fallback.
+  programs.zsh.initContent = ''
+    if [[ -n $SSH_CONNECTION && -z $ZELLIJ && $TERM != dumb ]]; then
+      zellij attach --create main && exit
+    fi
+  '';
+
   # Non-NixOS host: puts nix-provided XDG data/terminfo/locale where distro
   # programs look for them.
   targets.genericLinux.enable = true;
