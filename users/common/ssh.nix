@@ -37,5 +37,11 @@
       Port = 443;
       User = "git";
     };
+    # Notice a dead connection within ~1 min instead of hanging until TCP
+    # gives up, so a dropped session can be reconnected right away.
+    settings."*" = {
+      ServerAliveInterval = 15;
+      ServerAliveCountMax = 4;
+    };
   };
 }
