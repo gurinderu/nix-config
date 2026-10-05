@@ -52,6 +52,15 @@
     # hosts/cloud-vm/home.nix) only hits with its own pin.
     # Advance with `nix flake update llm-agents`.
     llm-agents.url = "github:numtide/llm-agents.nix";
+    codex-cli-nix.url = "github:sadjow/codex-cli-nix";
+    # warpify: zellij plugin + CLI for binding clients to tabs. Provides
+    # homeManagerModules.default, imported by hosts/cloud-vm/home.nix only.
+    # Follows our nixpkgs/home-manager; the Rust toolchain comes from its
+    # own rust-overlay pin (rust-toolchain.toml), so the build is unaffected.
+    # Advance with `nix flake update warpify`.
+    warpify.url = "github:gurinderu/warpify";
+    warpify.inputs.nixpkgs.follows = "nixpkgs";
+    warpify.inputs.home-manager.follows = "home-manager";
   };
 
   outputs =

@@ -3,7 +3,20 @@
 # live here.
 { inputs, pkgs, ... }:
 {
-  imports = [ ../../users/common/home.nix ];
+  imports = [
+    ../../users/common/home.nix
+    inputs.warpify.homeManagerModules.default
+  ];
+
+  # warpify CLI + zellij plugin. The module links the wasm into the data dir,
+  # adds load_plugins (with zellij:link) to programs.zellij.settings, and
+  # pre-grants the plugin's permissions at activation — don't repeat any of it.
+  programs.warpify = {
+    enable = true;
+    # Every client that connects gets its own tab instead of sharing
+    # the focused one. Applies to new zellij sessions only.
+    onConnect = "new-tab";
+  };
 
   home = {
     # Claude Code from github:ryoppippi/nix-claude-code (see the flake input).
@@ -11,6 +24,7 @@
     # monitor) and codegraph (semantic code-intelligence MCP for agents).
     packages = [
       inputs.nix-claude-code.packages.${pkgs.stdenv.hostPlatform.system}.claude
+      inputs.codex-cli-nix.packages.${pkgs.stdenv.hostPlatform.system}.default
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.clauth
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.codegraph
     ];
