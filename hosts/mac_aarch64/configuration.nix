@@ -240,4 +240,9 @@
   nixpkgs.config.allowUnfree = true;
 
   users.users.gurinderu.home = "/Users/gurinderu";
+  # nix-darwin writes these to /etc/ssh/nix_authorized_keys.d/gurinderu, which
+  # sshd reads in addition to ~/.ssh/authorized_keys, so existing keys still work.
+  users.users.gurinderu.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP58UnVU9OcX2YBthtWCYMl/Q0xfPSzxQ0BZD4dXztn9 cloud-vm"
+  ];
 }
