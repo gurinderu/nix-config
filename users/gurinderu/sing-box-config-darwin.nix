@@ -56,7 +56,10 @@ import ./sing-box-config.nix {
         "netbird"
         "netbird-ui"
       ];
-      domain = [ "netbird.infrahub.cloudless.dev" ];
+      domain = [
+        "netbird.cloudless.dev"
+        "netbird.infrahub.cloudless.dev"
+      ];
       outbound = "vless-main";
     }
     {
@@ -119,7 +122,10 @@ import ./sing-box-config.nix {
       # Control-plane host only — the dashboard must keep getting a fakeip so
       # it goes through the proxy. This real IP exists for the daemon's
       # process_name bypass; see the note where that route rule used to be.
-      domain = [ "netbird.infrahub.cloudless.dev" ];
+      domain = [
+        "netbird.cloudless.dev"
+        "netbird.infrahub.cloudless.dev"
+      ];
       server = "yandex";
     }
   ];
