@@ -1,5 +1,5 @@
 # NetBird client — WireGuard overlay mesh against a self-hosted control plane
-# (netbird.infrahub.cloudless.dev). The package is a repack of upstream's macOS
+# (netbird.cloudless.dev). The package is a repack of upstream's macOS
 # release artifacts; see pkgs/netbird/default.nix for why it is not taken from
 # nixpkgs.
 #
@@ -63,7 +63,7 @@ let
   # why the start script below waits for the sing-box TUN, and why
   # NB_DISABLE_CUSTOM_ROUTING keeps netbird's own sockets on the normal
   # route table instead of binding past the TUN.
-  managementUrl = "https://netbird.infrahub.cloudless.dev:443";
+  managementUrl = "https://netbird.cloudless.dev:443";
 
   start = pkgs.writeShellScript "netbird-start" ''
     mkdir -p ${stateDir} ${logDir}
