@@ -1,5 +1,5 @@
 # NetBird client — WireGuard overlay mesh against a self-hosted control plane
-# (SING_BOX_NETBIRD_RELAY_DOMAIN). The package is a repack of upstream's macOS
+# (SING_BOX_NETBIRD_MGMT_DOMAIN). The package is a repack of upstream's macOS
 # release artifacts; see pkgs/netbird/default.nix for why it is not taken from
 # nixpkgs.
 #
@@ -63,7 +63,7 @@ let
   # why the start script below waits for the sing-box TUN, and why
   # NB_DISABLE_CUSTOM_ROUTING keeps netbird's own sockets on the normal
   # route table instead of binding past the TUN.
-  managementUrl = "https://SING_BOX_NETBIRD_RELAY_DOMAIN:443";
+  managementUrl = "https://SING_BOX_NETBIRD_MGMT_DOMAIN:443";
 
   start = pkgs.writeShellScript "netbird-start" ''
     mkdir -p ${stateDir} ${logDir}
