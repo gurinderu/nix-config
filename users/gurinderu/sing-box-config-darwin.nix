@@ -128,6 +128,18 @@ import ./sing-box-config.nix {
       ];
       server = "yandex";
     }
+    {
+      # The NetBird dashboard (a public page) fetches the IdP discovery document
+      # from authentik.cloudless.dev. A fakeip answer lands in 172.24.0.0/16 —
+      # private space — and Chrome's Local Network Access then blocks that
+      # public-to-local fetch ("Permission was denied for this request to access
+      # the `local` address space"), so the dashboard fails with
+      # "Unauthenticated" (observed 2026-10-16/17). A real IP keeps the fetch
+      # public; the browser's traffic to it still falls through to `final`, the
+      # same as for the NetBird control-plane host above.
+      domain = [ "authentik.cloudless.dev" ];
+      server = "yandex";
+    }
   ];
 
   # No podman bridge and no strict_route on macOS (the latter is a Linux/Windows
