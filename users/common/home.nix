@@ -70,6 +70,13 @@ in
     # preset as a Rust format string in its configuration plugin (what the
     # in-app wizard writes), so lift it from the source and fill in the
     # wizard's default modifiers (primary Ctrl, secondary Alt).
+    #
+    # On top of the preset, Alt+{ / Alt+} switch tabs in every mode (locked
+    # included): BetterTouchTool maps Mac trackpad swipes to Option+Shift+[ /
+    # Option+Shift+], which Warp sends as ESC { / ESC } once Option acts as
+    # Meta. (Alt+[ is ESC [, the CSI prefix, and the preset already uses it.)
+    # zellij only reads the first `keybinds` block, so splice them into the
+    # preset's.
     extraConfig =
       let
         presets = builtins.readFile "${pkgs.zellij-unwrapped.src}/default-plugins/configuration/src/presets.rs";
@@ -77,11 +84,25 @@ in
         body = builtins.head (
           pkgs.lib.splitString ''"#'' (builtins.elemAt (pkgs.lib.splitString ''r#"'' fn) 1)
         );
+        preset =
+          builtins.replaceStrings
+            [ "{{" "}}" "{primary_modifier}" "{secondary_modifier}" ]
+            [ "{" "}" "Ctrl" "Alt" ]
+            body;
+        anchor = "keybinds clear-defaults=true {\n";
       in
+      assert pkgs.lib.hasInfix anchor preset;
       builtins.replaceStrings
-        [ "{{" "}}" "{primary_modifier}" "{secondary_modifier}" ]
-        [ "{" "}" "Ctrl" "Alt" ]
-        body;
+        [ anchor ]
+        [
+          ''
+            ${anchor}    shared {
+                    bind "Alt {" { GoToPreviousTab; }
+                    bind "Alt }" { GoToNextTab; }
+                }
+          ''
+        ]
+        preset;
   };
 
   # Dev CLI tools wanted on every machine. Add a tool here once and it lands on
