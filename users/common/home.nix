@@ -57,6 +57,11 @@ in
       theme = "tokyo-night-modal";
       theme_dark = "tokyo-night-modal";
       theme_light = "tokyo-night-light-modal";
+      # Warp's Cmd+click on a link is also forwarded by zellij to the app in
+      # the pane (e.g. Claude Code, which enables mouse tracking), where it
+      # can trigger actions. With mouse_mode off zellij neither captures nor
+      # forwards the mouse; selection and scrolling are left to the terminal.
+      mouse_mode = false;
     };
   };
 
