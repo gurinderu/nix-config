@@ -5,18 +5,20 @@
 {
   imports = [
     ../../users/common/home.nix
-    inputs.warpify.homeManagerModules.default
+    # Disabled for now, together with the warpify flake input.
+    # inputs.warpify.homeManagerModules.default
   ];
 
   # warpify CLI + zellij plugin. The module links the wasm into the data dir,
   # adds load_plugins (with zellij:link) to programs.zellij.settings, and
   # pre-grants the plugin's permissions at activation — don't repeat any of it.
-  programs.warpify = {
-    enable = true;
-    # Every client that connects gets its own tab instead of sharing
-    # the focused one. Applies to new zellij sessions only.
-    onConnect = "new-tab";
-  };
+  # Disabled for now.
+  # programs.warpify = {
+  #   enable = true;
+  #   # Every client that connects gets its own tab instead of sharing
+  #   # the focused one. Applies to new zellij sessions only.
+  #   onConnect = "new-tab";
+  # };
 
   home = {
     # Claude Code from github:ryoppippi/nix-claude-code (see the flake input).

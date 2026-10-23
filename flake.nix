@@ -58,9 +58,10 @@
     # Follows our nixpkgs/home-manager; the Rust toolchain comes from its
     # own rust-overlay pin (rust-toolchain.toml), so the build is unaffected.
     # Advance with `nix flake update warpify`.
-    warpify.url = "github:gurinderu/warpify";
-    warpify.inputs.nixpkgs.follows = "nixpkgs";
-    warpify.inputs.home-manager.follows = "home-manager";
+    # Disabled for now (also commented out in hosts/cloud-vm/home.nix).
+    # warpify.url = "github:gurinderu/warpify";
+    # warpify.inputs.nixpkgs.follows = "nixpkgs";
+    # warpify.inputs.home-manager.follows = "home-manager";
   };
 
   outputs =
