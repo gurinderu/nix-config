@@ -713,8 +713,7 @@
         "nix-homebrew": "nix-homebrew",
         "nixpkgs": "nixpkgs_6",
         "nixpkgs-unstable": "nixpkgs-unstable",
-        "sops-nix": "sops-nix",
-        "warpify": "warpify"
+        "sops-nix": "sops-nix"
       }
     },
     "rust-overlay": {
@@ -727,27 +726,6 @@
         "owner": "oxalica",
         "repo": "rust-overlay",
         "rev": "6a84c41e705533dcc5569ac0731f18406b4cdf86",
-        "type": "github"
-      },
-      "original": {
-        "owner": "oxalica",
-        "repo": "rust-overlay",
-        "type": "github"
-      }
-    },
-    "rust-overlay_2": {
-      "inputs": {
-        "nixpkgs": [
-          "warpify",
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1790843958,
-        "narHash": "sha256-jtYAaAXT1gxEtzmeYmOGu0IvKPle5J39BOFbgl6os+A=",
-        "owner": "oxalica",
-        "repo": "rust-overlay",
-        "rev": "b2ccad3b67335d368eef49ec48b9c8166858e73d",
         "type": "github"
       },
       "original": {
@@ -839,30 +817,6 @@
       "original": {
         "owner": "numtide",
         "repo": "treefmt-nix",
-        "type": "github"
-      }
-    },
-    "warpify": {
-      "inputs": {
-        "home-manager": [
-          "home-manager"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ],
-        "rust-overlay": "rust-overlay_2"
-      },
-      "locked": {
-        "lastModified": 1790929777,
-        "narHash": "sha256-V2cojHMRJoKPqLNkHQtJkpRuc387CDJs9ltlwGqlJ8o=",
-        "owner": "gurinderu",
-        "repo": "warpify",
-        "rev": "c24cfc992d67f88f8d460ea06b9a315fc78797e0",
-        "type": "github"
-      },
-      "original": {
-        "owner": "gurinderu",
-        "repo": "warpify",
         "type": "github"
       }
     }
