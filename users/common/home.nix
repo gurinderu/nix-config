@@ -63,6 +63,25 @@ in
       # forwards the mouse; selection and scrolling are left to the terminal.
       mouse_mode = false;
     };
+    # Stock keybindings grab Ctrl+n/p/t/s/o/... that apps in the pane need
+    # (e.g. Claude Code). Use zellij's "Unlock-First (non-colliding)" preset
+    # instead: start locked, so keys go straight to the app, and reach every
+    # zellij mode via Ctrl+g first (then p/t/r/s/o/m). zellij only ships the
+    # preset as a Rust format string in its configuration plugin (what the
+    # in-app wizard writes), so lift it from the source and fill in the
+    # wizard's default modifiers (primary Ctrl, secondary Alt).
+    extraConfig =
+      let
+        presets = builtins.readFile "${pkgs.zellij-unwrapped.src}/default-plugins/configuration/src/presets.rs";
+        fn = builtins.elemAt (pkgs.lib.splitString "pub fn unlock_first_keybinds(" presets) 1;
+        body = builtins.head (
+          pkgs.lib.splitString ''"#'' (builtins.elemAt (pkgs.lib.splitString ''r#"'' fn) 1)
+        );
+      in
+      builtins.replaceStrings
+        [ "{{" "}}" "{primary_modifier}" "{secondary_modifier}" ]
+        [ "{" "}" "Ctrl" "Alt" ]
+        body;
   };
 
   # Dev CLI tools wanted on every machine. Add a tool here once and it lands on
