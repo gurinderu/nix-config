@@ -11,17 +11,33 @@
   # Every non-Warp terminal (ssh, zellij, Terminal.app, thinkpad) keeps it.
   autosuggestion.enable = false;
   initContent = pkgs.lib.mkMerge [
-    # mosh sessions land in the persistent zellij session `main`, and leaving
-    # zellij ends the mosh session. mosh-server sets no env var of its own, so
+    # mosh sessions land in a persistent multiplexer session, and leaving it
+    # ends the mosh session: herdr's default session where herdr is installed
+    # (cloud-vm, so the Moshi app can follow agents by their herdr pane),
+    # otherwise the zellij session `main`. `herdr` alone attaches to the
+    # default session or starts it. mosh-server sets no env var of its own, so
     # detect it as the shell's parent (`comm` is a bare name on Linux, a full
-    # path on macOS — hence the glob). mkBefore runs this ahead of oh-my-zsh,
-    # which would be thrown away by the exec anyway. Plain ssh and local
-    # shells are untouched; home-manager's programs.zellij zsh integration
-    # stays off, since it would auto-start zellij in every shell.
+    # path on macOS — hence the glob). Only a plain `mosh host` login gets
+    # here: the Moshi app runs `mosh-server new … -- sh -lc '<attach cmd>'`
+    # itself, so its sessions never source .zshrc. That is what lets this
+    # path load a host's desktop herdr config (hidden sidebar and tab row,
+    # see hosts/cloud-vm/home.nix) when one exists. HERDR_ENV guards against
+    # nesting: herdr panes keep the env the server started with. mkBefore
+    # runs this ahead of oh-my-zsh, which would be thrown away by the exec
+    # anyway. Plain ssh and local shells are untouched; home-manager's
+    # programs.zellij zsh integration stays off, since it would auto-start
+    # zellij in every shell.
     (pkgs.lib.mkBefore ''
-      if [[ -o interactive && -z $ZELLIJ ]] && (( $+commands[zellij] )) \
+      if [[ -o interactive && -z $ZELLIJ && -z $HERDR_ENV ]] \
           && [[ "$(ps -o comm= -p $PPID 2>/dev/null)" == *mosh-server* ]]; then
-        exec zellij attach --create main
+        if (( $+commands[herdr] )); then
+          if [[ -r ''${XDG_CONFIG_HOME:-$HOME/.config}/herdr/desktop.toml ]]; then
+            export HERDR_CONFIG_PATH=''${XDG_CONFIG_HOME:-$HOME/.config}/herdr/desktop.toml
+          fi
+          exec herdr
+        elif (( $+commands[zellij] )); then
+          exec zellij attach --create main
+        fi
       fi
     '')
     ''

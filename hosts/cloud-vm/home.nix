@@ -25,12 +25,17 @@
   home = {
     # Claude Code from github:ryoppippi/nix-claude-code (see the flake input).
     # From numtide's llm-agents.nix: clauth (multi-account manager / usage
-    # monitor) and codegraph (semantic code-intelligence MCP for agents).
+    # monitor), codegraph (semantic code-intelligence MCP for agents) and
+    # herdr (agent-aware terminal multiplexer; not in our stable nixpkgs).
+    # mosh logins attach to herdr (see users/common/zsh.nix), and the
+    # moshi-hook daemon finds it on ~/.nix-profile/bin to follow agents by
+    # their herdr pane.
     packages = [
       inputs.nix-claude-code.packages.${pkgs.stdenv.hostPlatform.system}.claude
       inputs.codex-cli-nix.packages.${pkgs.stdenv.hostPlatform.system}.default
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.clauth
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.codegraph
+      inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.herdr
     ];
 
     # Default login user on Ubuntu cloud images.
@@ -40,14 +45,36 @@
 
   # Interactive ssh logins land in a persistent zellij session: a dropped
   # connection reattaches to the same panes on the next login, and leaving
-  # zellij (detach or exit) closes the ssh shell too. Skipped inside zellij,
-  # for `ssh host cmd` (not interactive, so .zshrc never runs) and on dumb
-  # terminals. If zellij itself fails, the plain shell stays as a fallback.
+  # zellij (detach or exit) closes the ssh shell too. Skipped inside zellij
+  # and herdr (whose panes inherit SSH_CONNECTION from the login that started
+  # its server), for `ssh host cmd` (not interactive, so .zshrc never runs)
+  # and on dumb terminals. If zellij itself fails, the plain shell stays as a
+  # fallback.
   programs.zsh.initContent = ''
-    if [[ -n $SSH_CONNECTION && -z $ZELLIJ && $TERM != dumb ]]; then
+    if [[ -n $SSH_CONNECTION && -z $ZELLIJ && -z $HERDR_ENV && $TERM != dumb ]]; then
       zellij attach --create main && exit
     fi
   '';
+
+  # herdr UI for the desktop: the plain mosh login from the Mac loads this
+  # file via HERDR_CONFIG_PATH (users/common/zsh.nix), so Warp shows only the
+  # panes. The sidebar starts collapsed to zero width (prefix+b brings it
+  # back) and the tab row hides while a workspace has a single tab; herdr has
+  # no setting that hides it with several tabs. These keys are read by each
+  # attaching client, so the Moshi app, which attaches on its own without this
+  # file, keeps the full UI (or herdr's mobile layout at phone widths).
+  # ~/.config/herdr/config.toml stays unmanaged so herdr's settings UI can
+  # write it; this file does not inherit from it. onboarding = false since
+  # herdr would otherwise try to record finishing onboarding in this
+  # read-only file.
+  xdg.configFile."herdr/desktop.toml".source = (pkgs.formats.toml { }).generate "herdr-desktop.toml" {
+    onboarding = false;
+    ui = {
+      sidebar_start_collapsed = true;
+      sidebar_collapsed_mode = "hidden";
+      hide_tab_bar_when_single_tab = true;
+    };
+  };
 
   # Non-NixOS host: puts nix-provided XDG data/terminfo/locale where distro
   # programs look for them.
