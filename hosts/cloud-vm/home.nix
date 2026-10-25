@@ -1,7 +1,12 @@
 # Home environment for the cloud VM. Common dev tools + zsh/git/neovim/starship/
 # direnv/zellij come from ../../users/common/home.nix. Only VM-specific bits
 # live here.
-{ inputs, pkgs, ... }:
+{
+  inputs,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [
     ../../users/common/home.nix
@@ -71,6 +76,16 @@
   # here because this file does not inherit them from config.toml, where
   # `clauth herdr install` writes them. clauth cannot heal this read-only
   # file, so toggling its delegate_row_text knob only reaches config.toml.
+  # The [keys] table makes every default letter binding also fire on the
+  # Russian (ЙЦУКЕН, Mac "Russian – PC") letter at the same physical key, so
+  # ctrl+b then w works with either layout on. Setting an action replaces its
+  # default, so each list keeps the Latin key first. Shifted bindings take the
+  # uppercase Cyrillic letter as written ("prefix+Т", not "prefix+shift+т"):
+  # mosh delivers shift+т as a bare "Т", and herdr only folds ASCII capitals
+  # into shift. Cyrillic letters never coincide with a Latin binding, so
+  # nothing collides. config.toml carries a hand-copied [keys] table and the
+  # same extra prefix+ф on clauth's binding; after changing this map, copy
+  # the [keys] table of the generated desktop.toml over that one.
   xdg.configFile."herdr/desktop.toml".source = (pkgs.formats.toml { }).generate "herdr-desktop.toml" (
     let
       clauthRow = [
@@ -85,17 +100,115 @@
           "$clauth"
         ]
       ];
+      # Character each physical key types on the Russian layout, unshifted and
+      # shifted, for the keys herdr binds by default ("[" opens copy mode).
+      russian = {
+        a = "ф";
+        b = "и";
+        c = "с";
+        d = "в";
+        e = "у";
+        g = "п";
+        h = "р";
+        j = "о";
+        k = "л";
+        l = "д";
+        n = "т";
+        o = "щ";
+        p = "з";
+        q = "й";
+        r = "к";
+        s = "ы";
+        t = "е";
+        v = "м";
+        w = "ц";
+        x = "ч";
+        z = "я";
+        "[" = "х";
+      };
+      russianShifted = {
+        d = "В";
+        g = "П";
+        h = "Р";
+        j = "О";
+        k = "Л";
+        l = "Д";
+        n = "Т";
+        p = "З";
+        r = "К";
+        t = "Е";
+        w = "Ц";
+        x = "Ч";
+      };
+      # "x" -> [ "x" "ч" ]; "shift+x" -> [ "shift+x" "Ч" ].
+      withRussian =
+        key:
+        let
+          base = lib.removePrefix "shift+" key;
+        in
+        [
+          key
+          (if base == key then russian.${key} else russianShifted.${base})
+        ];
+      withPrefix = map (key: "prefix+${key}");
+      # herdr 0.9.5 defaults (the template in `herdr`'s binary) that use a key
+      # the Russian layout moves; ?, tab, minus and 1..9 stay put.
+      prefixDefaults = {
+        settings = "s";
+        detach = "q";
+        reload_config = "shift+r";
+        open_notification_target = "o";
+        workspace_picker = "w";
+        goto = "g";
+        new_workspace = "shift+n";
+        new_worktree = "shift+g";
+        rename_workspace = "shift+w";
+        close_workspace = "shift+d";
+        new_tab = "c";
+        rename_tab = "shift+t";
+        previous_tab = "p";
+        next_tab = "n";
+        close_tab = "shift+x";
+        rename_pane = "shift+p";
+        edit_scrollback = "e";
+        copy_mode = "[";
+        focus_pane_left = "h";
+        focus_pane_down = "j";
+        focus_pane_up = "k";
+        focus_pane_right = "l";
+        swap_pane_left = "shift+h";
+        swap_pane_down = "shift+j";
+        swap_pane_up = "shift+k";
+        swap_pane_right = "shift+l";
+        split_vertical = "v";
+        close_pane = "x";
+        zoom = "z";
+        resize_mode = "r";
+        toggle_sidebar = "b";
+      };
+      # Navigate mode (prefix+w) takes these without the prefix.
+      navigateDefaults = {
+        navigate_pane_left = "h";
+        navigate_pane_down = "j";
+        navigate_pane_up = "k";
+        navigate_pane_right = "l";
+      };
     in
     {
       onboarding = false;
-      keys.command = [
-        {
-          key = "prefix+a";
-          type = "plugin_action";
-          command = "clauth.open";
-          description = "clauth accounts";
-        }
-      ];
+      keys =
+        lib.mapAttrs (_: key: withPrefix (withRussian key)) prefixDefaults
+        // lib.mapAttrs (_: withRussian) navigateDefaults
+        // {
+          command = [
+            {
+              key = withPrefix (withRussian "a");
+              type = "plugin_action";
+              command = "clauth.open";
+              description = "clauth accounts";
+            }
+          ];
+        };
       ui = {
         sidebar_start_collapsed = true;
         sidebar_collapsed_mode = "hidden";
