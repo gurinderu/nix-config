@@ -57,52 +57,14 @@ in
       theme = "tokyo-night-modal";
       theme_dark = "tokyo-night-modal";
       theme_light = "tokyo-night-light-modal";
-      # Warp's Cmd+click on a link is also forwarded by zellij to the app in
-      # the pane (e.g. Claude Code, which enables mouse tracking), where it
-      # can trigger actions. With mouse_mode off zellij neither captures nor
-      # forwards the mouse; selection and scrolling are left to the terminal.
-      mouse_mode = false;
+      # Alt+{ / Alt+} switch tabs: BetterTouchTool maps Mac trackpad swipes to
+      # Option+Shift+[ / Option+Shift+], which Warp sends as ESC { / ESC }
+      # once Option acts as Meta.
+      keybinds.shared = {
+        "bind \"Alt {\"".GoToPreviousTab = [ ];
+        "bind \"Alt }\"".GoToNextTab = [ ];
+      };
     };
-    # Stock keybindings grab Ctrl+n/p/t/s/o/... that apps in the pane need
-    # (e.g. Claude Code). Use zellij's "Unlock-First (non-colliding)" preset
-    # instead: start locked, so keys go straight to the app, and reach every
-    # zellij mode via Ctrl+g first (then p/t/r/s/o/m). zellij only ships the
-    # preset as a Rust format string in its configuration plugin (what the
-    # in-app wizard writes), so lift it from the source and fill in the
-    # wizard's default modifiers (primary Ctrl, secondary Alt).
-    #
-    # On top of the preset, Alt+{ / Alt+} switch tabs in every mode (locked
-    # included): BetterTouchTool maps Mac trackpad swipes to Option+Shift+[ /
-    # Option+Shift+], which Warp sends as ESC { / ESC } once Option acts as
-    # Meta. (Alt+[ is ESC [, the CSI prefix, and the preset already uses it.)
-    # zellij only reads the first `keybinds` block, so splice them into the
-    # preset's.
-    extraConfig =
-      let
-        presets = builtins.readFile "${pkgs.zellij-unwrapped.src}/default-plugins/configuration/src/presets.rs";
-        fn = builtins.elemAt (pkgs.lib.splitString "pub fn unlock_first_keybinds(" presets) 1;
-        body = builtins.head (
-          pkgs.lib.splitString ''"#'' (builtins.elemAt (pkgs.lib.splitString ''r#"'' fn) 1)
-        );
-        preset =
-          builtins.replaceStrings
-            [ "{{" "}}" "{primary_modifier}" "{secondary_modifier}" ]
-            [ "{" "}" "Ctrl" "Alt" ]
-            body;
-        anchor = "keybinds clear-defaults=true {\n";
-      in
-      assert pkgs.lib.hasInfix anchor preset;
-      builtins.replaceStrings
-        [ anchor ]
-        [
-          ''
-            ${anchor}    shared {
-                    bind "Alt {" { GoToPreviousTab; }
-                    bind "Alt }" { GoToNextTab; }
-                }
-          ''
-        ]
-        preset;
   };
 
   # Dev CLI tools wanted on every machine. Add a tool here once and it lands on
