@@ -5,6 +5,8 @@
 {
   imports = [
     ../../users/common/home.nix
+    # Moshi iOS app bridge daemon; pairing/hook install stay manual (see module).
+    ../../users/common/moshi-hook.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
   ];
