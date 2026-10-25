@@ -67,14 +67,46 @@
   # write it; this file does not inherit from it. onboarding = false since
   # herdr would otherwise try to record finishing onboarding in this
   # read-only file.
-  xdg.configFile."herdr/desktop.toml".source = (pkgs.formats.toml { }).generate "herdr-desktop.toml" {
-    onboarding = false;
-    ui = {
-      sidebar_start_collapsed = true;
-      sidebar_collapsed_mode = "hidden";
-      hide_tab_bar_when_single_tab = true;
-    };
-  };
+  # The clauth plugin's dashboard key and sidebar account row are repeated
+  # here because this file does not inherit them from config.toml, where
+  # `clauth herdr install` writes them. clauth cannot heal this read-only
+  # file, so toggling its delegate_row_text knob only reaches config.toml.
+  xdg.configFile."herdr/desktop.toml".source = (pkgs.formats.toml { }).generate "herdr-desktop.toml" (
+    let
+      clauthRow = [
+        [
+          "state_icon"
+          "workspace"
+          "tab"
+        ]
+        [ "terminal_title_stripped" ]
+        [
+          "agent"
+          "$clauth"
+        ]
+      ];
+    in
+    {
+      onboarding = false;
+      keys.command = [
+        {
+          key = "prefix+a";
+          type = "plugin_action";
+          command = "clauth.open";
+          description = "clauth accounts";
+        }
+      ];
+      ui = {
+        sidebar_start_collapsed = true;
+        sidebar_collapsed_mode = "hidden";
+        hide_tab_bar_when_single_tab = true;
+        sidebar.agents.rows_by_agent = {
+          claude = clauthRow;
+          codex = clauthRow;
+        };
+      };
+    }
+  );
 
   # Non-NixOS host: puts nix-provided XDG data/terminfo/locale where distro
   # programs look for them.
