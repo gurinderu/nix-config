@@ -12,6 +12,8 @@
     ../../users/common/home.nix
     # Moshi iOS app bridge daemon; pairing/hook install stay manual (see module).
     ../../users/common/moshi-hook.nix
+    # Mac desktop notifications for herdr agents (spool hook + ssh reader).
+    ./herdr-notify.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
   ];
@@ -210,6 +212,10 @@
           ];
         };
       ui = {
+        # Pinned (it is herdr's default today): agent notifications on the
+        # Mac come from herdr-notify via Warp, so herdr must not also send
+        # its own OSC 9/99 to Warp should the default ever change.
+        toast.delivery = "off";
         sidebar_start_collapsed = true;
         sidebar_collapsed_mode = "hidden";
         hide_tab_bar_when_single_tab = true;
