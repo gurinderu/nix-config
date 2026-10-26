@@ -380,6 +380,16 @@ in
         server = "local";
       }
       {
+        # Self-hosted headscale control plane (the Mac's Tailscale logs in
+        # here) must resolve to a REAL IP, never a fakeip: the network
+        # extension sends to the fakeip outside the TUN, so nothing reaches the
+        # server and login hangs at "authentication in progress" (measured
+        # 2026-10-26: dig ts.wrp.bet returned a fakeip). `local` for the same
+        # reasons as the tailscale.com rule above.
+        domain = [ "ts.wrp.bet" ];
+        server = "local";
+      }
+      {
         # Tailnet hosts resolve via MagicDNS directly (ssh macbook.<tailnet>.ts.net
         # keeps working with "Use Tailscale DNS" turned OFF in the app).
         domain_suffix = [ "ts.net" ];
@@ -664,6 +674,18 @@ in
           # differs per platform (tailscaled on Linux, the macsys network-extension
           # on macOS), so it is passed in via tailscaleProcs.
           process_name = tailscaleProcs;
+          outbound = "direct-out";
+        }
+        {
+          # Self-hosted headscale control plane goes direct, whichever process
+          # dials it (the client, or a browser on the login page). domain is
+          # matched via the sniffed SNI (the DNS rule above returns a real IP);
+          # ip_cidr (ORed with domain by sing-box) catches connections to the
+          # A record with no sniffable name. If the direct path to it ever
+          # degrades, `vless-main` is the alternative, as with the NetBird
+          # control-plane exception in ./sing-box-config-darwin.nix.
+          domain = [ "ts.wrp.bet" ];
+          ip_cidr = [ "94.103.168.175/32" ];
           outbound = "direct-out";
         }
       ]
