@@ -256,6 +256,22 @@
             self.homeConfigurations."cloud-vm".activationPackage.drvPath;
       } ''printf '%s\n' "$activationDrv" > $out'';
 
+      # herdr-notify's unit and integration tests (pure stdlib python: wire
+      # schema, label cleaning, spool, forced-command parser, Mac agent logic
+      # incl. a real pty write). The Mac-only parts (Warp, lsappinfo, launchd)
+      # are covered by the manual checklist in the README.
+      checks.x86_64-linux.herdr-notify =
+        let
+          pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        in
+        pkgs.runCommand "herdr-notify-tests" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+          cp -r ${./pkgs/herdr-notify} src
+          chmod -R +w src
+          cd src
+          python3 -I -W error::ResourceWarning -m unittest discover -s tests -v
+          touch $out
+        '';
+
       nixosConfigurations."thinkpad-x1-gen12" = import ./hosts/thinkpad-x1-gen12 {
         inherit
           inputs

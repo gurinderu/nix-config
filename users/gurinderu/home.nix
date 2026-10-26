@@ -15,6 +15,8 @@
     ./ssh.nix
     ./sing-box.nix
     ./net-observer-bar.nix
+    # Warp notifications for herdr agents on cloud-vm (launchd agent).
+    ./herdr-notify.nix
     #./zed.nix
   ];
 
