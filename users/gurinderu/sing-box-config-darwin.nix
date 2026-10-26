@@ -7,11 +7,15 @@
 # `defaultInterface`. See the defaultInterface doc in ./sing-box-config.nix.
 { uplinkInterface }:
 import ./sing-box-config.nix {
-  # On macOS the Tailscale daemon is the system network-extension, not the
-  # `tailscaled` binary that exists on Linux. `Tailscale` is the GUI app.
+  # On macOS the Tailscale daemon is a system network-extension whose name
+  # depends on the build: `macsys` for the standalone download, `macos` for the
+  # App Store build. `tailscaled` covers the open-source build, which runs the
+  # same daemon binary as Linux. `Tailscale` is the GUI app.
   tailscaleProcs = [
     "Tailscale"
     "io.tailscale.ipn.macsys.network-extension"
+    "io.tailscale.ipn.macos.network-extension"
+    "tailscaled"
   ];
 
   # Belt-and-suspenders: even if process matching misses the network-extension,
