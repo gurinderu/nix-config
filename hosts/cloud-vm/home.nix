@@ -14,6 +14,8 @@
     ../../users/common/moshi-hook.nix
     # Mac desktop notifications for herdr agents (spool hook + ssh reader).
     ./herdr-notify.nix
+    # Name herdr agent tabs after the agent's terminal title.
+    ./herdr-tab-title.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
   ];
