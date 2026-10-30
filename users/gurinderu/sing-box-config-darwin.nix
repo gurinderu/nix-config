@@ -51,10 +51,16 @@ import ./sing-box-config.nix {
       # that management dial hits its 30s deadline and retries forever, so the
       # peer never registers and `netbird up` appears to hang.
       #
+      # The IdP host (authentik.cloudless.dev) is included for the same reason:
+      # the daemon itself does the SSO token exchange and OIDC discovery, and on
+      # 2026-10-30 its PKCE token POST timed out on the direct path (TLS
+      # handshake timeout / unexpected EOF, never reaching authentik), leaving
+      # `netbird up` stuck in LoginFailed while the browser, via `final`, worked.
+      #
       # Scope is deliberately narrow: the WireGuard peer and relay traffic is
       # addressed by raw IP with no domain to match on, so it falls through to
       # the process rule below and is NOT double-encrypted. Matching here works
-      # via SNI sniffing — the DNS rule below returns a real IP for this host,
+      # via SNI sniffing — the DNS rules below return a real IP for these hosts,
       # not a fakeip, so there is a genuine TLS ClientHello to sniff.
       process_name = [
         "netbird"
@@ -63,6 +69,7 @@ import ./sing-box-config.nix {
       domain = [
         "netbird.cloudless.dev"
         "netbird.infrahub.cloudless.dev"
+        "authentik.cloudless.dev"
       ];
       outbound = "vless-main";
     }
@@ -140,7 +147,8 @@ import ./sing-box-config.nix {
       # the `local` address space"), so the dashboard fails with
       # "Unauthenticated" (observed 2026-10-16/17). A real IP keeps the fetch
       # public; the browser's traffic to it still falls through to `final`, the
-      # same as for the NetBird control-plane host above.
+      # same as for the NetBird control-plane host above. The daemon's own IdP
+      # calls are routed to vless-main by the netbird exception route rule.
       domain = [ "authentik.cloudless.dev" ];
       server = "yandex";
     }
