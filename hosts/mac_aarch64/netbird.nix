@@ -55,7 +55,8 @@ let
   logDir = "/var/log/netbird";
 
   # Self-hosted control plane. Kept in sync with the control-plane rule in
-  # users/gurinderu/sing-box-config-darwin.nix. NB the routing story INVERTED
+  # users/gurinderu/sing-box-config-darwin.nix (which also proxies the daemon's
+  # SSO calls to the IdP, authentik.cloudless.dev). NB the routing story INVERTED
   # since the original 2026-07-29 note claimed a direct-out bypass was needed
   # for registration: the direct path to this host from the RU network is the
   # one that stalls (TLS completes, nothing returns), so the rule now sends
