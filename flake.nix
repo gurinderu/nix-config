@@ -97,6 +97,9 @@
       packages.aarch64-darwin.netbird =
         nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/netbird
           { };
+      # Same derivation, linux_amd64 CLI + daemon only, at the same version;
+      # cloud-vm consumes it via callPackage in hosts/cloud-vm/netbird.nix.
+      packages.x86_64-linux.netbird = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/netbird { };
       packages.x86_64-linux.rtk = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/rtk { };
 
       # socktainer (Docker API over Apple Container) — repack of upstream's

@@ -16,6 +16,8 @@
     ./herdr-notify.nix
     # Name herdr agent tabs after the agent's terminal title.
     ./herdr-tab-title.nix
+    # NetBird mesh client; the root-side systemd link is manual (see module).
+    ./netbird.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
   ];

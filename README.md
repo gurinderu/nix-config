@@ -68,6 +68,52 @@ sudo ufw deny 60000:61000/udp
 sudo ufw --force enable
 ```
 
+# netbird on cloud-vm
+
+`hosts/cloud-vm/netbird.nix` puts `netbird` on PATH and writes a systemd
+unit to `~/.config/systemd-system/netbird.service`; root links it in once
+(home-manager can't own a system unit). sudo's `secure_path` lacks the nix
+profile, so root calls need the full path (plain `sudo netbird` fails with "No
+such file or directory"); non-root `netbird status` works as is:
+
+```
+sudo systemctl link ~/.config/systemd-system/netbird.service
+sudo systemctl enable --now netbird
+netbird status    # Daemon status: NeedsLogin
+sudo ~/.nix-profile/bin/netbird up --management-url https://netbird.cloudless.dev:443 --no-browser
+```
+
+`--no-browser` prints an `https://authentik.cloudless.dev/device?code=...`
+link (device code, valid 10 min; consent screen "NetBird CLI login", served by
+the public authentik client `netbird-cli`). The `--management-url` on the
+first `up` is required: the unit passes the same URL to `netbird service run`,
+but that doesn't seed a new profile, which starts out pointing at
+`api.netbird.io` (checked on 0.75.1). `up` saves the URL to
+`/var/lib/netbird/default.json`, so later `up` calls can leave it out. The
+session expires after 24h unless login expiration is disabled for the peer in
+the dashboard; `up --setup-key <key>` is the alternative.
+
+After a switch that changes the unit (the switch says so), reload it:
+
+```
+sudo systemctl daemon-reload && sudo systemctl restart netbird
+```
+
+State is in `/var/lib/netbird`, the log in `/var/log/netbird/client.log`
+(plus `journalctl -u netbird`). Remove: `sudo systemctl disable --now netbird`,
+which also drops the link.
+
+Tailscale shares 100.64.0.0/10 (netbird peers are in 100.90.0.0/16). Its
+`ts-input` chain drops any 100.64.0.0/10 source that doesn't come in on
+`tailscale0`, but netbird inserts `-A INPUT -i wt0 -j ACCEPT` as the first
+`INPUT` rule, ahead of the `ts-input` jump, so `wt0` traffic gets through
+(checked after login). A tailscaled restart could re-order the rules; check
+with `sudo iptables -S INPUT`. Don't use
+`tailscale set --netfilter-mode=nodivert`: that also drops the
+`ts-postrouting` masquerade this node's exit-node offer needs. Routes don't
+clash: tailscale only installs /32s for its own peers (table 52), so netbird's
+subnet route via `wt0` loses only on an address both meshes hand out.
+
 # herdr-notify (Mac notifications for agents on cloud-vm)
 
 When a Claude Code or Codex agent in cloud-vm's default herdr session finishes
