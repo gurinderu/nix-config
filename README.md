@@ -163,6 +163,40 @@ with `sudo iptables -S INPUT`. Don't use
 clash: tailscale only installs /32s for its own peers (table 52), so netbird's
 subnet route via `wt0` loses only on an address both meshes hand out.
 
+# herdr server unit (cloud-vm)
+
+`hosts/cloud-vm/herdr-server.nix` defines `herdr-server.service`, a systemd
+user unit that runs `herdr server` with MemoryHigh=20G, MemoryMax=24G,
+OOMPolicy=continue and Restart=on-failure, so a runaway pane gets OOM-killed
+on its own instead of the global OOM killer taking down the server and every
+pane (as on 2026-10-26). Until the cutover it is defined but not started
+(`autostart = false` in the module): the server in use is still the one the
+first `herdr` client spawned. Clients need no change; they attach to whatever
+server listens on `~/.config/herdr/herdr.sock`.
+
+Cutover, when losing the current panes is fine:
+
+```
+herdr server stop                       # ends every pane of the old server
+pgrep -af 'herdr server'                # nothing left
+systemctl --user start herdr-server
+systemctl --user status herdr-server    # active, Memory: ... (high: 20G max: 24G)
+herdr status server                     # status: running
+```
+
+Then attach as usual (mosh login or the Moshi app). To keep it across reboots,
+set `autostart = true` in `hosts/cloud-vm/herdr-server.nix`, commit and
+`home-manager switch --flake .#cloud-vm` (that adds it to
+`default.target.wants`; the running server is left alone). `systemctl --user
+enable` does not work instead: the home-manager unit file has no `[Install]`
+section while `autostart` is false.
+
+After that, a switch never restarts the unit (X-RestartIfChanged=false), so a
+herdr bump runs the old binary until `systemctl --user restart herdr-server`,
+which ends all panes. If a client ever starts while the unit is down, it
+spawns an unmanaged server again; `systemctl --user status herdr-server` shows
+which one is running.
+
 # herdr-notify (Mac notifications for agents on cloud-vm)
 
 When a Claude Code or Codex agent in cloud-vm's default herdr session finishes
