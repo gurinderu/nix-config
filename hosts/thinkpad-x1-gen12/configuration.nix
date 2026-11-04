@@ -20,6 +20,14 @@
     "nix-command"
     "flakes"
   ];
+  # Keep the store from growing without bound: weekly GC of generations older
+  # than two weeks (systemd timer), plus store-wide hard-link dedup.
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 14d";
+  };
+  nix.optimise.automatic = true;
 
   boot = {
     plymouth = {
@@ -218,6 +226,9 @@
   home-manager.useGlobalPkgs = true;
   home-manager.useUserPackages = true;
   home-manager.backupFileExtension = "bak";
+  # Replace a stale *.bak from an earlier activation instead of aborting the
+  # switch with "would be clobbered" when the same file collides again.
+  home-manager.overwriteBackup = true;
   home-manager.extraSpecialArgs = { inherit inputs; };
   users.defaultUserShell = pkgs.zsh;
 
@@ -262,6 +273,10 @@
   # Auth is done once manually (`sudo tailscale up`) with key expiry disabled in the
   # admin console — no authKeyFile so rebuilds never fail on an expired/used key.
   services.tailscale.enable = true;
+
+  # Firmware updates via LVFS (`fwupdmgr refresh && fwupdmgr update`); the
+  # X1 gen 12's BIOS, EC, Thunderbolt and fingerprint reader all ship there.
+  services.fwupd.enable = true;
 
   # This laptop doubles as a CI runner: stay awake on AC / docked so the runner and SSH
   # remain reachable; still suspend on lid-close while on battery. NOTE: COSMIC may run
