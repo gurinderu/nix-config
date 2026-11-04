@@ -20,6 +20,14 @@
     };
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
+    # microvm.nix: runs the thinkpad's GitHub Actions runners inside
+    # cloud-hypervisor microVMs (hosts/thinkpad-x1-gen12/github-runner.nix),
+    # so a CI job no longer shares a kernel with the host's secrets. Only
+    # nixosModules.host is imported; the guests are evaluated with the host's
+    # own pkgs, so following our nixpkgs keeps one package set for both.
+    # Advance with `nix flake update microvm`.
+    microvm.url = "github:microvm-nix/microvm.nix";
+    microvm.inputs.nixpkgs.follows = "nixpkgs";
     # net-observer: the Mac's network observer daemon (Rust; replaced the
     # retired shell observer 2026-09-16). Provides darwinModules.default, which
     # owns the launchd job, and packages.<system>.net-observerd. Kept on its own
