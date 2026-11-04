@@ -1,17 +1,12 @@
-# Claude Code for the 0xff user on NixOS, from unstable (stable lags far behind
-# its near-daily releases). This host has no pkgs-unstable module arg, so we
-# instantiate it locally.
+# Claude Code for the 0xff user on NixOS, from github:ryoppippi/nix-claude-code
+# (see the flake input) — the same package cloud-vm uses (hosts/cloud-vm/
+# home.nix). nixpkgs lags far behind its near-daily releases, and this pulls
+# no second nixpkgs instance the way importing nixpkgs-unstable here did.
 {
   inputs,
   pkgs,
   ...
 }:
-let
-  pkgsUnstable = import inputs.nixpkgs-unstable {
-    inherit (pkgs.stdenv.hostPlatform) system;
-    config.allowUnfree = true;
-  };
-in
 {
-  home.packages = [ pkgsUnstable.claude-code ];
+  home.packages = [ inputs.nix-claude-code.packages.${pkgs.stdenv.hostPlatform.system}.claude ];
 }
