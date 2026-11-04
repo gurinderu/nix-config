@@ -1,7 +1,9 @@
 { config, ... }:
 {
   sops = {
-    defaultSopsFile = ../../secrets/secrets.yaml;
+    # Mac-only secrets (the SSH keys below); encrypted to the gurinderu key
+    # alone. sing-box reads shared.yaml explicitly (./sing-box.nix).
+    defaultSopsFile = (import ../../secrets).mac;
     defaultSopsFormat = "yaml";
     age.keyFile = "/Users/gurinderu/.config/sops/age/keys.txt";
     # Keep decrypted secrets on persistent storage. The upstream default is

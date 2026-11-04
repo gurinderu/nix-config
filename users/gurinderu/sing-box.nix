@@ -10,6 +10,9 @@
 }:
 let
   secrets = import ./sing-box-secrets.nix;
+  # The VLESS credentials live in the file shared with the thinkpad, not in
+  # this host's defaultSopsFile (mac.yaml, see ./sops.nix).
+  sopsFile = (import ../../secrets).shared;
 
   singBoxConfig = pkgs.writeTextFile {
     name = "sing-box-config.json";
@@ -57,7 +60,7 @@ in
 
     # Decrypt the whole secrets file ONCE into JSON (one sops invocation instead
     # of one per field), then pull each value out with jq.
-    ALL_SECRETS=$(${pkgs.sops}/bin/sops -d --output-type json "${config.sops.defaultSopsFile}")
+    ALL_SECRETS=$(${pkgs.sops}/bin/sops -d --output-type json "${sopsFile}")
 
     # Build the sed substitutions for every backend server. Tokens carry the
     # index suffix so order does not matter.
@@ -68,7 +71,7 @@ in
       # Fail loudly on a missing key instead of substituting the literal "null"
       # jq -r would otherwise emit (which sing-box only rejects later, opaquely).
       value=$(${pkgs.jq}/bin/jq -er --arg k "$2" '.[$k]' <<<"$ALL_SECRETS") || {
-        echo "sing-box: missing secret $2 in ${config.sops.defaultSopsFile}" >&2
+        echo "sing-box: missing secret $2 in ${sopsFile}" >&2
         exit 1
       }
       # Escape sed REPLACEMENT metacharacters (& \ and the | delimiter) so the

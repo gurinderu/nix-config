@@ -11,6 +11,7 @@ let
   # Single source of truth for backend servers, fields and tokens (shared with
   # the macOS path so the two can never drift).
   inherit (import ../../users/gurinderu/sing-box-secrets.nix) servers fields secretName;
+  sopsFiles = import ../../secrets;
 
   # from/to pairs for builtins.replaceStrings. Index-suffixed tokens mean no
   # token is a prefix of another, so list order is irrelevant. `server_port` is
@@ -100,12 +101,16 @@ let
 in
 {
   sops = {
-    defaultSopsFile = ../../secrets/secrets.yaml;
+    # Host-wide default: thinkpad.yaml (the CI runner and Docker Hub tokens in
+    # ./github-runner.nix). The VLESS credentials below come from shared.yaml,
+    # which the Mac reads too. Neither file holds the Mac-only SSH keys.
+    defaultSopsFile = sopsFiles.thinkpad;
     defaultSopsFormat = "yaml";
     # Derive the age identity from this host's SSH host key — no private age
-    # key file to copy around. Add the matching age *public* key (from
-    # `ssh-to-age < /etc/ssh/ssh_host_ed25519_key.pub`) to .sops.yaml and run
-    # `sops updatekeys secrets/secrets.yaml` so this host can decrypt.
+    # key file to copy around. Its age *public* key (from
+    # `ssh-to-age < /etc/ssh/ssh_host_ed25519_key.pub`) is the thinkpad-x1-gen12
+    # recipient in .sops.yaml; after changing it, run
+    # `sops updatekeys secrets/shared.yaml secrets/thinkpad.yaml`.
     age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
     secrets = builtins.listToAttrs (
@@ -113,7 +118,7 @@ in
         n:
         map (f: {
           name = secretName n f;
-          value = { };
+          value.sopsFile = sopsFiles.shared;
         }) (builtins.attrNames fields)
       ) servers
     );
@@ -131,7 +136,7 @@ in
   boot.kernelModules = [ "tun" ];
 
   # Restart sing-box when sops re-renders the config (i.e. after a credential
-  # rotation in secrets.yaml + nixos-rebuild switch). restartTriggers on the
+  # rotation in secrets/shared.yaml + nixos-rebuild switch). restartTriggers on the
   # service only catches structural Nix changes; this path unit catches
   # secret-value changes that only affect the rendered file on disk.
   # Using a path unit instead of sops restartUnits avoids the activation-script

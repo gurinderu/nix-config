@@ -117,6 +117,30 @@ nix-gc.timer`), which keeps two weeks of generations to roll back to. It only
 prunes this user's profiles; root's (`/nix/var/nix/profiles/per-user/root`)
 stay as they are.
 
+# Secrets
+
+sops-nix with age. Secrets are split by who has to read them, so the
+thinkpad's key (derived from its SSH host key) cannot decrypt the Mac-only
+ones:
+
+| File                    | Holds                                    | Recipients          |
+| ----------------------- | ---------------------------------------- | ------------------- |
+| `secrets/shared.yaml`   | sing-box VLESS (`sing_box_vless_N_*`)    | gurinderu, thinkpad |
+| `secrets/thinkpad.yaml` | `github_runner_token`, `dockerhub_*`     | gurinderu, thinkpad |
+| `secrets/mac.yaml`      | SSH keys (`ssh_*`)                       | gurinderu           |
+
+Recipients come from the `path_regex` rules in `.sops.yaml`; `gurinderu` is
+the Mac's key and the admin key, so it can edit every file.
+`secrets/default.nix` maps each role to its file; each host's
+`defaultSopsFile` is its own file, and both sing-box modules read
+`shared.yaml` explicitly. Put a new secret in the file whose recipients are
+exactly the hosts that read it, e.g. `sops secrets/mac.yaml`.
+
+Migration: until `scripts/split-sops-secrets.sh` has been run on the Mac
+(`nix shell nixpkgs#sops nixpkgs#yq-go -c bash scripts/split-sops-secrets.sh`)
+and its output committed, every role still resolves to the old single
+`secrets/secrets.yaml`.
+
 # netbird on cloud-vm
 
 `hosts/cloud-vm/netbird.nix` puts `netbird` on PATH and writes a systemd
