@@ -24,23 +24,23 @@
   fetchurl,
 }:
 let
-  version = "0.4.37";
+  version = "0.4.48";
   sources = {
     x86_64-linux = {
       asset = "moshi-hook_Linux_x86_64.tar.gz";
-      hash = "sha256-xAG6Ct6qRtOFWP+GKlhMgk0y5k3I151E2qU+gaaqtK8=";
+      hash = "sha256-0Ed4iQxUamK4V2p57TcQvK+0AdtklT/wIKZtYfDqu4w=";
     };
     aarch64-linux = {
       asset = "moshi-hook_Linux_arm64.tar.gz";
-      hash = "sha256-WKYsxSQ3O3K4kiakcYk7x/F2u0sJrmbJZIfHEG059rs=";
+      hash = "sha256-6+ejIvskdBhvop6TyT50KfC/m9veh8wPPTa4fQ04aUI=";
     };
     aarch64-darwin = {
       asset = "moshi-hook-app_Darwin_arm64.tar.gz";
-      hash = "sha256-KUqozhQ4VxOJACzXhf3h4+44ifXqwgQDExqw5cTIZXA=";
+      hash = "sha256-uk9PlBCBUn+wO44jN4PVCkKHERhtVgBtVZx6iP8yTAk=";
     };
     x86_64-darwin = {
       asset = "moshi-hook-app_Darwin_x86_64.tar.gz";
-      hash = "sha256-AOXUtShurRCDvs+r/2NGp7w0gcOOpgymUF73fVfAEn4=";
+      hash = "sha256-bYA7lqKSKPLPTDAxe9NR3JXbgZLtQtubvn11xHmuUDM=";
     };
   };
   system = stdenvNoCC.hostPlatform.system;
