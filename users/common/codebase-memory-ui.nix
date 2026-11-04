@@ -1,7 +1,8 @@
 # codebase-memory-mcp graph UI — one long-lived instance serving the HTTP graph
 # visualization on 127.0.0.1:9749. Shared across hosts: this single module emits
-# a launchd agent on darwin and a systemd user service on linux, so both the mac
-# and the thinkpad get it from users/common/home.nix with no per-host copy.
+# a launchd agent on darwin and a systemd user service on linux, so the mac, the
+# thinkpad and cloud-vm all get it from users/common/home.nix with no per-host
+# copy.
 #
 # The graph store is global (~/.cache/codebase-memory-mcp/<project>.db), so this
 # one server sees EVERY indexed project regardless of cwd — you switch projects
