@@ -48,7 +48,11 @@
     # hosts/cloud-vm/home.nix) only hits with its own pin.
     # Advance with `nix flake update llm-agents`.
     llm-agents.url = "github:numtide/llm-agents.nix";
+    # codex-cli-nix: OpenAI's Codex CLI, used on cloud-vm. Follows our
+    # nixpkgs-unstable (already locked for the Mac's pkgs-unstable) so it
+    # adds no nixpkgs lock node of its own.
     codex-cli-nix.url = "github:sadjow/codex-cli-nix";
+    codex-cli-nix.inputs.nixpkgs.follows = "nixpkgs-unstable";
     # warpify: zellij plugin + CLI for binding clients to tabs. Provides
     # homeManagerModules.default, imported by hosts/cloud-vm/home.nix only.
     # Follows our nixpkgs/home-manager; the Rust toolchain comes from its
