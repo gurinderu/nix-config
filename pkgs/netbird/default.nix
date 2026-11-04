@@ -66,23 +66,23 @@
   gnused,
 }:
 let
-  version = "0.75.1";
+  version = "0.81.4";
   baseUrl = "https://github.com/netbirdio/netbird/releases/download/v${version}";
 
   cli = fetchurl {
     url = "${baseUrl}/netbird_${version}_darwin_arm64.tar.gz";
-    hash = "sha256-HLiRc/r/PEW3GSfomRy0bsbd80HWQp4mOcVym6ONK5Q=";
+    hash = "sha256-RZeC5pZ73LOllzSk2jfJ931uCFsoA5sFAQOaGny9Cq4=";
   };
 
   ui = fetchurl {
     url = "${baseUrl}/netbird-ui_${version}_darwin_arm64_signed.zip";
-    hash = "sha256-l1GIzti10MIUvZNSvppzGEgJhvmvNZbHX06KHjky1Es=";
+    hash = "sha256-Pcc6vxKWfxX4L0w4AlKvWuVzsGtgXcAPMKDCk+qs5Vs=";
   };
 
   # Declared THIRD on purpose: the update script finds hashes by position.
   cliLinux = fetchurl {
     url = "${baseUrl}/netbird_${version}_linux_amd64.tar.gz";
-    hash = "sha256-/kLQSaLQGbxV54e0I81ULtvQdlCYACtKtbX+GQhqNAY=";
+    hash = "sha256-6bPX45ZYTdwlE9ULyRaP5LaonBpScwjB5RMxx6HmcWU=";
   };
 
   darwin = stdenvNoCC.mkDerivation {
