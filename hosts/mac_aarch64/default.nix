@@ -231,7 +231,9 @@ nix-darwin.lib.darwinSystem {
           # nix-homebrew manages. Homebrew 6.0 started prompting "proceed with
           # cleanup? [y/n]" before doing so, and during activation stdin is not
           # a TTY, so the rebuild hung looping on "Invalid input". Hand-installed
-          # brews (colima, socktainer's deps, …) are tolerated on purpose.
+          # brews (e.g. the leftover socktainer/container formulas noted above;
+          # colima comes from nix now, users/gurinderu/darwin.nix) are
+          # tolerated on purpose.
           # (If hand-installed packages should ever be removed, switch to "zap"
           # AND declare the taps in homebrew.taps so cleanup leaves
           # nix-homebrew's taps alone.)
