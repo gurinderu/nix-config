@@ -23,9 +23,3 @@ creation_rules:
     key_groups:
       - age:
           - *gurinderu
-  # Legacy single file, until scripts/split-sops-secrets.sh replaces it.
-  - path_regex: (^|/)secrets/secrets\.yaml$
-    key_groups:
-      - age:
-          - *gurinderu
-          - *thinkpad-x1-gen12

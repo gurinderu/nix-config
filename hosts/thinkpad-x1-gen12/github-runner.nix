@@ -265,8 +265,8 @@ in
   # authenticated — Docker Hub's per-account limit instead of the anonymous
   # per-IP one the shared sing-box exit trips. Group-readable by `podman` because
   # the hook runs as the runner's own system user (supplementary group
-  # `podman`), not root. Add `dockerhub_username` and `dockerhub_token` to secrets.yaml before
-  # rebuilding, or sops-install-secrets fails activation.
+  # `podman`), not root. Add `dockerhub_username` and `dockerhub_token` to
+  # secrets/thinkpad.yaml before rebuilding, or sops-install-secrets fails activation.
   sops.secrets.dockerhub_username = {
     group = "podman";
     mode = "0440";
