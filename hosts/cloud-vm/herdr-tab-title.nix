@@ -37,6 +37,7 @@ let
   };
   pluginDir = "${config.xdg.dataHome}/herdr-tab-title/plugin";
   hookPath = "${config.home.profileDirectory}/bin/herdr-tab-title-hook";
+  linkPlugin = import ./herdr-plugin-link.nix { inherit lib pkgs herdr; };
 in
 {
   home.packages = [ hook ];
@@ -71,35 +72,10 @@ in
     command = ["${hookPath}"]
   '';
 
-  home.activation.herdrTabTitlePlugin = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
-    htt_reg=$(${herdr}/bin/herdr plugin list --json 2>/dev/null \
-      | ${pkgs.python3}/bin/python3 -I -c '
-    import json, sys
-    try:
-        ps = json.load(sys.stdin)["result"]["plugins"]
-    except Exception:
-        sys.exit(1)
-    for p in ps:
-        if p.get("plugin_id") == "herdr-tab-title":
-            print(p.get("manifest_path") or "?")
-    ') || htt_reg="?error"
-    htt_want=$(readlink -f ${lib.escapeShellArg pluginDir}/herdr-plugin.toml)
-    case "$htt_reg" in
-      "?error")
-        echo "herdr-tab-title: could not read 'herdr plugin list'; plugin not linked (continuing)" >&2 ;;
-      "$htt_want")
-        : ;;
-      "")
-        if run ${herdr}/bin/herdr plugin link ${lib.escapeShellArg pluginDir}; then
-          echo "herdr-tab-title: plugin linked; run herdr-tab-title-hook --all to name existing tabs" >&2
-        else
-          echo "herdr-tab-title: 'herdr plugin link' failed (continuing)" >&2
-        fi ;;
-      *)
-        echo "herdr-tab-title: plugin registered from $htt_reg, relinking to $htt_want" >&2
-        run ${herdr}/bin/herdr plugin unlink herdr-tab-title || true
-        run ${herdr}/bin/herdr plugin link ${lib.escapeShellArg pluginDir} \
-          || echo "herdr-tab-title: 'herdr plugin link' failed (continuing)" >&2 ;;
-    esac
-  '';
+  home.activation.herdrTabTitlePlugin = lib.hm.dag.entryAfter [ "linkGeneration" ] (linkPlugin {
+    id = "herdr-tab-title";
+    inherit pluginDir;
+    var = "htt";
+    linkedMsg = "plugin linked; run herdr-tab-title-hook --all to name existing tabs";
+  });
 }
