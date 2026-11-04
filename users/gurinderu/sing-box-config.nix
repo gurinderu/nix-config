@@ -790,8 +790,27 @@ in
   # flip the vless-main kill-switch at runtime (see its outbound comment) and to
   # inspect/select outbounds from a Clash dashboard. Bound to 127.0.0.1 so it is
   # not exposed.
+  #
+  # Loopback binding alone does not keep browsers out: with no allow-list
+  # sing-box answers CORS with `*`, so any web page open in a local browser
+  # could script fetch() against 127.0.0.1:9090 and flip the kill-switch
+  # selector. Pin the allowed origin to the controller's own (its bundled
+  # dashboard UI) and keep Private Network Access preflights refused. CORS
+  # only governs requests that carry an Origin header — non-browser clients
+  # (net-observerd, curl) send none and are unaffected.
   experimental =
-    (if clashApi then { clash_api.external_controller = "127.0.0.1:9090"; } else { })
+    (
+      if clashApi then
+        {
+          clash_api = {
+            external_controller = "127.0.0.1:9090";
+            access_control_allow_origin = [ "http://127.0.0.1:9090" ];
+            access_control_allow_private_network = false;
+          };
+        }
+      else
+        { }
+    )
     // (
       # Persist the fakeip mapping (and other cached state) across restarts.
       # Without it, after a sing-box restart an in-flight connection/ICMP to a
