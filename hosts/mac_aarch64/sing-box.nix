@@ -43,6 +43,11 @@ let
   # StandardOutPath BEFORE running the program — it cannot wait for a mkdir.
   stateDir = "/var/lib/sing-box";
   logPath = "/var/log/sing-box.log";
+  # md5 of the config.json the running sing-box loaded. Written by the start
+  # script right before exec and by every gated kickstart (sing-box-reload,
+  # postActivation); read by both gates. /var/run is root-only and cleared at
+  # boot, and the boot-time start re-creates it.
+  reloadHash = "/var/run/sing-box-reload.hash";
 
   # Resolved label of the main daemon, read back from the config so the two
   # can never drift: the reload/netreload
@@ -168,14 +173,21 @@ let
       fi
     fi
 
-    # Stamp the moment THIS process instance starts, so postActivation (below)
-    # can tell whether the config on disk is newer than the config this
-    # running process actually loaded — without parsing `ps` output for a
-    # start time (macOS `ps -o lstart=` has no portable seconds-since-epoch
-    # form short of round-tripping through `date -j -f`, for no benefit over a
-    # file this script already controls). Written right before exec, so it
-    # reflects "the config this process is about to read", not "when launchd
-    # spawned the wrapper".
+    # Record WHICH config this process instance loads: the md5 of config.json
+    # goes into the same state file sing-box-reload (below) gates on, so the
+    # reload daemon and postActivation both compare the config on disk with the
+    # config the running process actually read — whoever started it (a reload
+    # kickstart, launchd's own reload during a switch, netreload, boot). Written
+    # right before exec, so it reflects "the config this process is about to
+    # read", not "when launchd spawned the wrapper". `started` is kept as the
+    # "sing-box has run since boot" marker postActivation's wedge probe keys on.
+    # An unreadable config clears the hash, so the next gate falls through to
+    # a kickstart instead of trusting a stale value.
+    if loaded=$(/sbin/md5 -q ${configPath} 2>/dev/null); then
+      printf '%s' "$loaded" > ${reloadHash}
+    else
+      /bin/rm -f ${reloadHash}
+    fi
     /usr/bin/touch ${stateDir}/started
 
     exec ${pkgs.sing-box}/bin/sing-box run -c ${configPath}
@@ -296,9 +308,11 @@ in
   #
   # Mechanics: hash config.json (atomic rename means the hash always sees a
   # complete old or new file, never a torn write) and compare with the hash
-  # recorded after the last successful kickstart. The state lives in /var/run
-  # (root-only tmpfs, cleared at boot — a post-boot fire may thus kickstart
-  # once redundantly, which the boot-fresh daemon absorbs). The state is
+  # recorded after the last successful kickstart — and by the start script
+  # itself right before it execs sing-box, so the state always names the
+  # config the running process loaded, whatever started it. The state lives
+  # in /var/run (root-only, cleared at boot; the boot-time start re-creates
+  # it, so a post-boot fire on an unchanged config is a no-op). The state is
   # written only AFTER launchctl succeeds: a failed kickstart leaves the old
   # hash in place so the next fire retries instead of wedging on "already
   # applied". If the config is missing/unreadable the hash comes up empty and
@@ -311,7 +325,7 @@ in
       "-c"
       ''
         cfg=${configPath}
-        state=/var/run/sing-box-reload.hash
+        state=${reloadHash}
         new=$(/sbin/md5 -q "$cfg" 2>/dev/null || :)
         old=$(/bin/cat "$state" 2>/dev/null || :)
         if [ -n "$new" ] && [ "$new" = "$old" ]; then
@@ -445,46 +459,63 @@ in
   # a fresh config; this is a second, ordering-based check that doesn't
   # depend on any launchd job having stayed loaded.
   #
-  # Check: config.json's mtime vs the ${stateDir}/started stamp the start
-  # script (above) touches immediately before it execs sing-box. If the
-  # config was written after the running process last started, that process
-  # is serving a config older than what's on disk now — kickstart it. This
-  # is preferred over inspecting the process's own start time (`ps` has no
-  # portable seconds-since-epoch form on macOS without round-tripping through
-  # `date -j -f`) because it reuses a marker this module already writes.
+  # Check: md5 of config.json vs ${reloadHash}, the hash of the config the
+  # running process loaded (the start script writes it right before exec) or
+  # was last kickstarted onto (sing-box-reload writes it after its kick). If
+  # they differ, the running process is serving something other than what's
+  # on disk now — kickstart it, then record the hash the same way
+  # sing-box-reload does. Sharing that daemon's state, rather than comparing
+  # config.json's mtime with a start stamp, is what keeps a switch to ONE
+  # restart: home-manager's mv also fires sing-box-reload, and with the old
+  # mtime check whichever of the two ran second still saw "config newer than
+  # start" (the reload kick's new process can sit up to ~30s in the cache.db
+  # lsof wait before stamping) and kicked again. Now whichever runs second
+  # finds the hash already current and skips. A missing hash (unreadable
+  # config at the last start) compares unequal and falls through to the
+  # kickstart, the safe default.
   #
-  # If sing-box isn't running at all, do nothing — RunAtLoad/KeepAlive will
-  # bring it up already reading the config home-manager just wrote, and a
-  # `launchctl kickstart` of a stopped job here would just race that. Runs in
-  # postActivation, i.e. strictly after the "Activating home-manager" block
-  # above has finished, per the ordering this comment opens with. Never fails
-  # activation: this is a best-effort freshness nudge, not a required step.
+  # If sing-box has not run since boot (no ${stateDir}/started), do nothing —
+  # RunAtLoad/KeepAlive will bring it up already reading the config
+  # home-manager just wrote, and a `launchctl kickstart` of a stopped job here
+  # would just race that. Runs in postActivation, i.e. strictly after the
+  # "Activating home-manager" block above has finished, per the ordering this
+  # comment opens with. Never fails activation: this is a best-effort
+  # freshness nudge, not a required step.
   system.activationScripts.postActivation.text = lib.mkAfter ''
     echo "checking sing-box config freshness..." >&2
+    kicked=
     if [ -e ${stateDir}/started ] && [ -e ${configPath} ]; then
-      configMtime=$(/usr/bin/stat -f %m ${configPath} 2>/dev/null || echo 0)
-      startedMtime=$(/usr/bin/stat -f %m ${stateDir}/started 2>/dev/null || echo 0)
-      if [ "$configMtime" -gt "$startedMtime" ]; then
-        echo "sing-box: config.json is newer than the running process; kickstarting" >&2
-        /bin/launchctl kickstart -k system/${singBoxLabel} \
-          || echo "warning: could not kickstart sing-box (not loaded yet?)" >&2
+      new=$(/sbin/md5 -q ${configPath} 2>/dev/null || :)
+      old=$(/bin/cat ${reloadHash} 2>/dev/null || :)
+      if [ -z "$new" ] || [ "$new" != "$old" ]; then
+        echo "sing-box: config.json differs from the one the running process loaded; kickstarting" >&2
+        if /bin/launchctl kickstart -k system/${singBoxLabel}; then
+          kicked=1
+          if [ -n "$new" ]; then
+            printf '%s' "$new" > ${reloadHash}
+          fi
+        else
+          echo "warning: could not kickstart sing-box (not loaded yet?)" >&2
+        fi
       fi
     fi
     # Wedge guard. The freshness check above only fires on a config change, so
     # a sing-box that is alive but whose TUN has stalled (the interface-monitor
     # wedge that follows a burst of network switches — process up, tun dead,
-    # underlay fine) is NOT restarted by a plain rebuild, and normally waits on
-    # the net-observer watchdog to kick it. But a `darwin-rebuild switch` is an
-    # explicit operator action, and the operator running it while the tunnel is
-    # down almost certainly wants it fixed now, not in ~45s — and the watchdog
-    # may itself be absent (a manual bootout that this same activation's sweep
-    # is only now restoring). So probe the tunnel and kick a wedged process
-    # directly. Bounded (-m5). Only kicks when the tunnel is actually not
-    # passing traffic, so a healthy switch never restarts it; an unnecessary
-    # kick during a real outage costs one restart, harmless on this non-hot
-    # activation path. 204 is the generate_204 success code the whole stack
-    # keys on.
-    if [ -e ${stateDir}/started ]; then
+    # underlay fine) is NOT restarted by a plain rebuild. Nothing else restarts
+    # it either: since the shell net-observer and its watchdog were removed
+    # (2026-09-16, see ./default.nix) this host has no runtime auto-recovery,
+    # so a `darwin-rebuild switch` — an explicit operator action, most likely
+    # run precisely because the tunnel is down — is the repair path. So probe
+    # the tunnel and kick a wedged process directly. Bounded (-m5). Only kicks
+    # when the tunnel is actually not passing traffic, so a healthy switch
+    # never restarts it; an unnecessary kick during a real outage costs one
+    # restart, harmless on this non-hot activation path. 204 is the
+    # generate_204 success code the whole stack keys on. Skipped when the
+    # freshness check just kickstarted: the new process may still be in the
+    # start script's ~30s cache.db wait, so the probe would fail against a
+    # process that isn't up yet and kick it a second time.
+    if [ -z "$kicked" ] && [ -e ${stateDir}/started ]; then
       code=$(/usr/bin/curl -m5 -s -o /dev/null -w '%{http_code}' \
         https://www.gstatic.com/generate_204 2>/dev/null)
       if [ "$code" != 204 ]; then
