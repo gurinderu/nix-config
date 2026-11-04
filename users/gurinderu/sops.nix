@@ -14,7 +14,6 @@
     # decrypted on disk either way -- this only stops them from evaporating.
     defaultSecretsMountPoint = "${config.xdg.stateHome}/sops-nix/secrets.d";
     secrets = {
-      anthropic_api_key = { };
       ssh_ed25519 = {
         path = "/Users/gurinderu/.ssh/id_ed25519";
         mode = "0600";
@@ -39,7 +38,6 @@
         path = "/Users/gurinderu/.ssh/id_rsa.pub";
         mode = "0644";
       };
-      github_token_read = { };
     };
   };
 }
