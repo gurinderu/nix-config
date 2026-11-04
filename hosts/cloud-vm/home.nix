@@ -18,6 +18,9 @@
     ./herdr-tab-title.nix
     # NetBird mesh client; the root-side systemd link is manual (see module).
     ./netbird.nix
+    # osewa server (persistent terminals, next to mosh); enrollment, linger
+    # and the firewall are manual (see module and README).
+    ./osewa.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
   ];

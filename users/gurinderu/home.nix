@@ -17,6 +17,8 @@
     ./net-observer-bar.nix
     # Warp notifications for herdr agents on cloud-vm (launchd agent).
     ./herdr-notify.nix
+    # osewa client for the server on cloud-vm (enrollment is manual, README).
+    ./osewa.nix
     #./zed.nix
   ];
 
