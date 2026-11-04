@@ -141,6 +141,61 @@ Migration: until `scripts/split-sops-secrets.sh` has been run on the Mac
 and its output committed, every role still resolves to the old single
 `secrets/secrets.yaml`.
 
+# GitHub runner microVMs (thinkpad)
+
+The warp and trading runners run in one cloud-hypervisor microVM each
+(`microvm@warp-1`, `microvm@trading-1`), defined in
+`hosts/thinkpad-x1-gen12/github-runner.nix` (host side) and
+`github-runner-vm.nix` (guest). The guest gets the host store read-only, a
+registration token minted on the host (the PAT stays there) and the Docker Hub
+pull credentials, and reaches the network only through sing-box's TUN. Docker
+in jobs is the runner's own rootless podman inside the VM.
+
+Deploy with `test` first, which activates without making the generation the
+boot default, so a reboot undoes it:
+
+```
+sudo nixos-rebuild test --flake .#thinkpad-x1-gen12
+```
+
+Then check, and `switch` once a job has gone green:
+
+```
+systemctl status microvm@warp-1 microvm@trading-1      # active = guest booted (vsock notify)
+journalctl -u microvm@warp-1 -f                        # guest console + its journal, runner included
+systemctl status ghr-token-warp-1 ghr-token-trading-1  # registration token minted?
+systemctl list-timers 'ghr-token-*'
+ip -br addr show | grep ghr-                           # taps up, 10.89.255.x/30
+sudo iptables -S ghr-fwd; sudo iptables -t raw -S ghr-pre; sudo iptables -t nat -S ghr-nat
+sudo nixos-rebuild switch --flake .#thinkpad-x1-gen12
+```
+
+Both runners should show as Idle under the repos' Settings → Actions →
+Runners. `ls -l /dev/kvm` must exist on the host, and nested VMX must be on for
+trading's `.#qcow` build: `cat /sys/module/kvm_intel/parameters/nested` → `Y`.
+
+The VM state is under `/var/lib/microvms/<name>`: `var.img` (persistent caches,
+podman images, runner state and logs), `tmp.img` and `nix-store.img`
+(recreated empty on every VM start). To read the runner's `_diag` logs or
+inspect the caches, stop the VM and mount its `/var` read-only:
+
+```
+sudo systemctl stop microvm@warp-1
+sudo mount -o ro,loop,noload /var/lib/microvms/warp-1/var.img /mnt
+ls /mnt/log/github-runner/warp-1/   # Runner_*.log, Worker_*.log
+sudo umount /mnt && sudo systemctl start microvm@warp-1
+```
+
+`sudo systemctl restart microvm@warp-1` reboots a VM (killing a job in flight);
+deleting `var.img` while it is stopped starts it from cold caches.
+
+Rollback: `sudo reboot` after a `test` that went wrong, or after a `switch`,
+`sudo nixos-rebuild switch --rollback`. The previous generation brings back
+the host-side runner services and their `/var/cache/github-runner-*` caches,
+which this change leaves on disk. Once the VMs have run for a while, those
+can go, along with the old runner users' files:
+`sudo rm -rf /var/cache/github-runner-* /var/lib/github-runner /var/log/github-runner`.
+
 # netbird on cloud-vm
 
 `hosts/cloud-vm/netbird.nix` puts `netbird` on PATH and writes a systemd
