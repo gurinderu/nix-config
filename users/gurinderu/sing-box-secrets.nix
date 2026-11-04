@@ -9,6 +9,9 @@
 {
   # 1-based backend server indices. Each contributes a sing_box_vless_N_* secret
   # set and the matching SING_BOX_*_N placeholders in sing-box-config.nix.
+  # Must match the mkVless calls there: 7 (the RU exit) is no longer emitted,
+  # so it is not listed either and activation doesn't require its
+  # sing_box_vless_7_* keys.
   servers = [
     1
     2
@@ -16,7 +19,6 @@
     4
     5
     6
-    7
     8
   ];
 
