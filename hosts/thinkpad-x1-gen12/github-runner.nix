@@ -1,3 +1,20 @@
+# Self-hosted GitHub Actions runners for gurinderu/warp and gurinderu/trading,
+# one cloud-hypervisor microVM per runner (microvm.nix).
+#
+# Why VMs: the runners used to be host services with access to the host's
+# rootful podman socket. Any job could `docker run --privileged -v /:/host`
+# and own the laptop — read /etc/ssh/ssh_host_ed25519_key (this host's sops
+# age identity, see sing-box.nix), everything under /run/secrets, the runner
+# PAT. Now a job runs in a guest kernel, with rootless podman inside it as a
+# second layer, and the guest holds only what it needs: a short-lived runner
+# registration token and the Docker Hub pull credentials.
+#
+# This file is the HOST side: sizing options, the per-VM tap + firewall, the
+# registration-token refresher and the microvm.vms declarations. The guest
+# system is ./github-runner-vm.nix.
+#
+# Operating it (deploy, logs, rollback): README.md, "GitHub runner microVMs
+# (thinkpad)".
 {
   config,
   lib,
@@ -5,8 +22,10 @@
   ...
 }:
 let
+  cfg = config.thinkpad.githubRunnerVms;
+
   # One entry per repository this box serves; `count` is the number of
-  # parallel ephemeral runners for that repo.
+  # parallel ephemeral runners (= microVMs) for that repo.
   repos = [
     {
       repo = "warp";
@@ -17,8 +36,10 @@ let
       count = 1;
     }
   ];
-  # Flattened instance list: { repo, n, idx } where idx is global (used for the
-  # per-instance sccache port, which must be unique across ALL runners on the host).
+  # Flattened instance list: { repo, n, idx } where idx is global and 1-based
+  # (warp-1 = 1, trading-1 = 2). It used to pick a per-runner sccache port;
+  # now it picks each VM's addresses, MAC and vsock CID, which must be unique
+  # across ALL runners on the host.
   runners = lib.concatLists (
     lib.imap0 (
       ri: r:
@@ -29,296 +50,313 @@ let
       }) (lib.range 1 r.count)
     ) repos
   );
-  runnerName = r: "${r.repo}-${toString r.n}"; # systemd unit: github-runner-<repo>-<n>
-  runnerUser = r: "gh-runner-${runnerName r}";
+  runnerName = r: "${r.repo}-${toString r.n}"; # VM microvm@<name>; guest unit github-runner-<name>
 
-  # Runner job-started hook (ACTIONS_RUNNER_HOOK_JOB_STARTED). Does two things,
-  # in one script because the runner accepts a single hook path; the store path
-  # must end in .sh or the runner rejects the hook.
+  # Each VM gets a point-to-point /30 out of 10.89.255.0/24 on its own tap:
+  # host .4*idx+1, guest .4*idx+2. No bridge, so the VMs cannot reach each
+  # other except through the host's FORWARD chain, which drops it.
   #
-  # 1. Authenticate Docker Hub. All runners share one sing-box exit IP, so
-  #    anonymous pulls of the base images (rust/debian/nginx) trip Docker Hub's
-  #    per-IP rate limit (`toomanyrequests`) — the failure that killed the warp
-  #    #108 container build and left warp-frontend/-bot:main stale. `buildx`
-  #    forwards the credentials in $DOCKER_CONFIG/config.json to its buildkit for
-  #    the FROM pulls, so seeding docker.io auth here lifts the limit to
-  #    per-account with NO workflow change and everything still egressing through
-  #    the tunnel. The workflow's own `docker login ghcr.io` later merges its
-  #    entry into the same file (docker login preserves other registries' auths),
-  #    so the GHCR push keeps working. Missing/unreadable secret -> skip and fall
-  #    back to anonymous, so a not-yet-provisioned token never breaks a job.
-  #
-  # 2. Reap leftover Testcontainers (postgres etc.). Root podman is CI-only. The
-  #    warp suite disables Ryuk, so a job that was killed (no shutdown hook) leaks
-  #    its containers; this sweeps them on the next job's start.
-  #    Pool-safety: the sweep nukes ALL testcontainers-managed containers via the
-  #    shared Podman socket, so it must NOT run while a *concurrent* job has live
-  #    containers. A job has a `Runner.Worker` process only while it runs, and our
-  #    own job is exactly one worker; if we see more than one, another runner is
-  #    mid-job, so we skip the sweep and leave its containers alone. This needs
-  #    the runner's ProtectProc != "invisible" (set in serviceOverrides below) so
-  #    the hook can see the other runner users' workers in /proc.
-  jobStarted = pkgs.writeShellScript "gh-runner-job-started.sh" ''
-    set -u
-
-    # 1. Seed docker.io auth into the buildx/docker credential store.
-    user_file=${config.sops.secrets.dockerhub_username.path}
-    token_file=${config.sops.secrets.dockerhub_token.path}
-    if [ -n "''${DOCKER_CONFIG:-}" ] && [ -r "$user_file" ] && [ -r "$token_file" ]; then
-      ${pkgs.coreutils}/bin/mkdir -p "$DOCKER_CONFIG"
-      auth=$(${pkgs.coreutils}/bin/printf '%s:%s' \
-               "$(${pkgs.coreutils}/bin/cat "$user_file")" \
-               "$(${pkgs.coreutils}/bin/cat "$token_file")" \
-             | ${pkgs.coreutils}/bin/base64 -w0)
-      ${pkgs.coreutils}/bin/printf \
-        '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}\n' "$auth" \
-        > "$DOCKER_CONFIG/config.json"
-    fi
-
-    # 2. Reap leaked Testcontainers from prior jobs (pool-safe).
-    if [ "$(${pkgs.procps}/bin/pgrep -fc 'Runner\.Worker' 2>/dev/null || echo 0)" -gt 1 ]; then
-      exit 0
-    fi
-    host="unix:///run/podman/podman.sock"
-    docker() { ${pkgs.docker-client}/bin/docker --host "$host" "$@"; }
-    ids=$(docker ps -aq --filter label=org.testcontainers.managed-by=testcontainers 2>/dev/null) || exit 0
-    [ -n "$ids" ] && docker rm -f $ids >/dev/null 2>&1
-    exit 0
-  '';
-
-  # One ephemeral runner instance.
-  mkRunner = r: {
-    enable = true;
-    url = "https://github.com/gurinderu/${r.repo}";
-    tokenFile = config.sops.secrets.github_runner_token.path;
-    ephemeral = true; # fresh runner per job, auto re-registration
-    name = "nixos-thinkpad-${toString r.n}"; # GitHub runner names must be unique per repo
-    extraLabels = [
-      "nixos"
-      "thinkpad"
-    ]; # runs-on: [self-hosted, nixos, thinkpad]
-    replace = true;
-
-    # Run as a fixed system user instead of the module's default DynamicUser
-    # (github-runners/service.nix: `DynamicUser = mkDefault true`, disabled when
-    # `user`/`group` are set). DynamicUser allocates a fresh uid per activation and
-    # puts CacheDirectory under /var/cache/private/<name> (0700 root), reachable
-    # only via the service's mount-namespace bind. When sccache spawns the compiler
-    # in a subprocess it resolves CARGO_HOME to the real /var/cache/private/... path
-    # and the child — without the namespaced view — hits EACCES ("os error 13")
-    # traversing the 0700-root `private` dir, failing clippy/build/test at random
-    # ("sccache: failed to spawn ..."). A stable uid puts the cache at
-    # /var/cache/<name> owned by this user (no `private` indirection, no
-    # per-activation re-chown), removing that failure class. Per-instance user
-    # keeps the isolation DynamicUser gave each runner.
-    user = runnerUser r;
-    group = runnerUser r;
-
-    # Isolated from the system/home-manager profiles, so duplicating packages the host
-    # user also has is intentional. `docker-client` talks to the Podman socket.
-    extraPackages = with pkgs; [
-      docker-client
-      git-lfs
-      gh
-      gnugrep
-      gnused
-      rustup
-      sccache
-      mold
-    ];
-
-    extraEnvironment = {
-      # `docker ...` in jobs -> Podman's Docker-compatible API (engine runs as root).
-      DOCKER_HOST = "unix:///run/podman/podman.sock";
-      # Per-instance docker/buildx credential store. The job-started hook seeds
-      # docker.io auth here (so buildx pulls base images authenticated, dodging
-      # the shared-IP anonymous rate limit); the workflow's `docker login
-      # ghcr.io` merges its entry into the same file. Under CacheDirectory so it
-      # is writable and persists across the instance's jobs.
-      DOCKER_CONFIG = "/var/cache/github-runner-${runnerName r}/docker";
-      # Per-instance caches: a SHARED CARGO_HOME across concurrent runners races the
-      # cargo package-cache lock ("failed to acquire package cache lock"). Each runner
-      # keeps its own rustup/cargo/sccache, warmed across its jobs via CacheDirectory.
-      RUSTUP_HOME = "/var/cache/github-runner-${runnerName r}/rustup";
-      CARGO_HOME = "/var/cache/github-runner-${runnerName r}/cargo";
-      SCCACHE_DIR = "/var/cache/github-runner-${runnerName r}/sccache";
-      # Build cargo target/ on disk AND on an exec-capable mount. Under DynamicUser
-      # (the module default, before the fixed users above) systemd mounted
-      # CacheDirectory/StateDirectory (/var/cache,/var/lib) noexec, so build
-      # scripts / proc-macros in target/ there died with "Permission denied
-      # (os error 13)". The service PrivateTmp /tmp is the right spot: disk-backed
-      # (ext4 on the 482G /, NOT the small /run tmpfs), exec-allowed, and private +
-      # wiped per service instance (no cross-runner collision). Fixes the ENOSPC
-      # from 3 parallel builds sharing the 7.8G /run tmpfs for their checkouts.
-      CARGO_TARGET_DIR = "/tmp/cargo-target";
-      # ...and a DISTINCT sccache server port per instance. All runners share
-      # this one host; without this each sccache server defaults to port 4226,
-      # so two concurrent jobs collide and the loser dies with
-      # "sccache: failed to spawn ... (exit 254)", failing whichever job was
-      # compiling (usually the heavy Workspace-tests job). Per-instance port
-      # 4225 + idx (today warp-1=4226, trading-1=4227) lets the parallel
-      # servers coexist. Inherited by the job steps, so no per-repo ci.yml change needed.
-      SCCACHE_SERVER_PORT = toString (4225 + r.idx);
-      # Runner runs this before every job -> seed docker.io auth + sweep leaked
-      # Testcontainers from prior jobs (see jobStarted).
-      ACTIONS_RUNNER_HOOK_JOB_STARTED = "${jobStarted}";
-      # nixpkgs builds github-runner with nodeRuntimes = [ "node24" ] only; force any JS
-      # action still declaring node20 onto node24 (the GitHub default from 2026-06-16).
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 = "true";
-    };
-
-    serviceOverrides = {
-      # Access the Podman socket (group `podman`).
-      SupplementaryGroups = [ "podman" ];
-      # The module sets PrivateUsers=true, which maps the host GID `podman` to nobody
-      # inside the user namespace and voids the supplementary group. Disable it so the
-      # group actually grants socket access.
-      PrivateUsers = false;
-      # Writable, restart-persistent cache for rustup/cargo/sccache (per instance).
-      CacheDirectory = "github-runner-${runnerName r}";
-
-      # The module sets Restart="on-success" for ephemeral runners, so a failed
-      # re-registration (e.g. ExecStartPre overran TimeoutStartSec) leaves the unit dead
-      # until a manual restart. Restart on ANY exit so the runner self-heals, and give
-      # the slow ExecStartPre (registration + ephemeral _work wipe) more headroom.
-      Restart = lib.mkForce "always";
-      RestartSec = 30; # space out retries; don't hammer the GitHub API on a flaky network
-      TimeoutStartSec = 300;
-
-      # The module hardens the unit with ProtectProc="invisible" (hidepid for the
-      # service), which would hide other runners' Runner.Worker from the reap hook and
-      # break the pool-safety check in reapTestcontainers. Relax it so the hook can see
-      # them. Acceptable on a single-tenant CI box.
-      ProtectProc = lib.mkForce "default";
-
-      # The module sets UMask=0066, which leaves the runner's own diagnostic logs
-      # under /var/log/github-runner/<name>/Runner_*.log at mode 0600 — in
-      # practice root-only. Those logs carry the server's actual response; the
-      # journal gets only the runner's summary line, and that line misreports: a
-      # failed broker session prints as "the runner registration has been deleted
-      # from the server", which sent one investigation after an expired token, a
-      # registration race and a stale runner version before the logs settled it.
-      # 0026 makes new files 0640, readable by the runner's own group. The state
-      # directory keeps StateDirectoryMode=0700, so .credentials and the token
-      # stay out of the group's reach regardless.
-      UMask = lib.mkForce "0026";
-    };
+  # The /24 is NOT arbitrary: it sits inside the 10.88.0.0/15 that sing-box's
+  # TUN route-excludes (users/gurinderu/sing-box-config-linux.nix, there for
+  # host podman's bridges). Forwarded VM traffic is captured by the TUN's
+  # policy routing exactly like podman container traffic is; the replies have
+  # to come back to the VM through the main table, which only an excluded
+  # destination does — outside that range they would loop back into the TUN.
+  # Host podman's netavark carves its per-network /24s from 10.89.0.0/16
+  # bottom-up and skips subnets in use on a live interface, so 10.89.255.0/24
+  # is the far end of its pool.
+  vmSubnet = "10.89.255.0/24";
+  netFor = r: {
+    hostIp = "10.89.255.${toString (4 * r.idx + 1)}";
+    guestIp = "10.89.255.${toString (4 * r.idx + 2)}";
+    mac = "02:00:00:89:ff:${lib.fixedWidthString 2 "0" (lib.toLower (lib.toHexString r.idx))}";
+    tap = "ghr-${runnerName r}"; # IFNAMSIZ: at most 15 characters (asserted below)
+    cid = 10 + r.idx; # vsock CID, unique per VM (0-2 are reserved)
   };
 
-  # Self-heal against a silently-wedged listener. The ephemeral runner reaches the
-  # GitHub broker through sing-box's fake-ip TUN (all egress is tunnelled). When that
-  # path flaps the broker long-poll drops silently: Runner.Listener stays in "Listening
-  # for Jobs" with ZERO established connections to GitHub, never exits, so Restart=always
-  # never fires and the runner is invisible to GitHub while the queue stalls. Restart the
-  # unit when its listener has had no :443 connection for a while. A busy runner always
-  # holds live connections, so this never interrupts a running job.
-  mkWatchdogService =
+  # The fakeip pool sing-box answers proxied names from: VM traffic to it is
+  # legitimate (it is how every proxied hostname resolves), the rest of
+  # 172.16.0.0/12 is private and blocked below.
+  fakeipRange = (import ../../users/gurinderu/fakeip-range.nix).range;
+
+  # Destinations a runner VM never gets to, even through the TUN: the host
+  # itself (any of its addresses), the LAN, the tailnet/NetBird CGNAT space,
+  # the other VMs, link-local, multicast/reserved. GitHub, registries and
+  # caches are all public, so CI loses nothing. Dropped in raw PREROUTING,
+  # before routing and before any FORWARD rules tailscale/netavark/libvirt add.
+  blockedDsts = [
+    "0.0.0.0/8"
+    "10.0.0.0/8"
+    "100.64.0.0/10"
+    "127.0.0.0/8"
+    "169.254.0.0/16"
+    "172.16.0.0/12"
+    "192.168.0.0/16"
+    "224.0.0.0/3"
+  ];
+
+  ipt = "iptables -w";
+  ip6t = "ip6tables -w";
+
+  secretsRoot = "/run/gh-runner-secrets";
+
+  # Mint a runner registration token for the VM's repo with the PAT and drop
+  # it, with the Docker Hub credentials, into the VM's read-only share. A
+  # registration token is good for one hour and only registers runners on
+  # that one repo; the classic `repo` PAT behind it stays on the host. The
+  # Docker Hub files are owned by the guest's runner uid (2000, see
+  # github-runner-vm.nix), which reads them in its job-started hook; the
+  # 0700 parent directory keeps host users out.
+  mkTokenService =
     r:
     let
-      unit = "github-runner-${runnerName r}.service";
+      name = runnerName r;
+      dir = "${secretsRoot}/${name}";
     in
     {
-      description = "Restart ${unit} when its listener loses the GitHub connection";
-      serviceConfig.Type = "oneshot";
-      path = with pkgs; [
-        iproute2
-        procps
-        systemd
-        gnugrep
-        coreutils
+      description = "Refresh the GitHub runner registration token for microVM ${name}";
+      wantedBy = [ "multi-user.target" ];
+      wants = [ "network-online.target" ];
+      after = [
+        "network-online.target"
+        "sing-box.service"
       ];
+      path = with pkgs; [
+        coreutils
+        curl
+        jq
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        PrivateTmp = true;
+        UMask = "0077";
+        # GitHub or the tunnel can be down at boot; the guest's runner retries
+        # on its own until a token shows up, so keep trying in the background
+        # rather than holding anything up.
+        Restart = "on-failure";
+        RestartSec = 30;
+      };
+      unitConfig.StartLimitIntervalSec = 0;
       script = ''
-        set -u
-        unit=${unit}
-        systemctl is-active --quiet "$unit" || exit 0
-        pid=$(systemctl show -p MainPID --value "$unit")
-        [ "''${pid:-0}" -gt 0 ] 2>/dev/null || exit 0
-        # give a freshly (re)started listener time to register + connect
-        etimes=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
-        [ "''${etimes:-0}" -ge 90 ] || exit 0
-        conns=$(ss -tnpH state established '( dport = :443 )' 2>/dev/null | grep -c "pid=$pid,")
-        if [ "''${conns:-0}" -eq 0 ]; then
-          echo "$unit listener (pid $pid, up ''${etimes}s) has no GitHub connection — restarting"
-          systemctl restart "$unit"
-        fi
+        set -euo pipefail
+        install -d -m 0700 -o root -g root ${secretsRoot}
+        install -d -m 0755 -o root -g root ${dir}
+
+        # The PAT goes to curl in a header file, never on a command line.
+        hdr=$(mktemp)
+        printf 'Authorization: Bearer %s\n' "$(cat ${config.sops.secrets.github_runner_token.path})" > "$hdr"
+        resp=$(curl -fsS --retry 3 --max-time 60 -X POST \
+          -H @"$hdr" \
+          -H 'Accept: application/vnd.github+json' \
+          -H 'X-GitHub-Api-Version: 2022-11-28' \
+          https://api.github.com/repos/gurinderu/${r.repo}/actions/runners/registration-token)
+        rm -f "$hdr"
+        token=$(jq -er '.token' <<<"$resp")
+        expires=$(jq -r '.expires_at' <<<"$resp")
+
+        # Atomic replace: the guest may be reading the old one right now.
+        printf '%s' "$token" > ${dir}/.registration-token.new
+        mv -f ${dir}/.registration-token.new ${dir}/registration-token
+        echo "registration token for ${r.repo} refreshed (expires $expires)"
+
+        install -m 0400 -o 2000 -g 2000 ${config.sops.secrets.dockerhub_username.path} ${dir}/dockerhub_username
+        install -m 0400 -o 2000 -g 2000 ${config.sops.secrets.dockerhub_token.path} ${dir}/dockerhub_token
       '';
     };
-  mkWatchdogTimer = _r: {
+  mkTokenTimer = _r: {
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnBootSec = "3min";
-      OnUnitActiveSec = "2min"; # check every 2 minutes
+      OnBootSec = "1min";
+      # Half the token's lifetime: the file in the share always has 30+ min left.
+      OnUnitActiveSec = "30min";
     };
   };
 
   forEachRunner = f: lib.listToAttrs (map f runners);
 in
 {
-  # Classic PAT (scope `repo`) used to register the runners; shared by all instances
-  # and all repos (a classic `repo`-scoped PAT can register runners on any repo the
-  # account owns, so warp and trading use the same one).
-  # tokenFile is read by root in ExecStartPre, so the sops secret's root:0400 is enough.
-  sops.secrets.github_runner_token = { };
-
-  # Docker Hub credentials (username + a read-only access token) the job-started
-  # hook bakes into each runner's $DOCKER_CONFIG so buildx pulls base images
-  # authenticated — Docker Hub's per-account limit instead of the anonymous
-  # per-IP one the shared sing-box exit trips. Group-readable by `podman` because
-  # the hook runs as the runner's own system user (supplementary group
-  # `podman`), not root. Add `dockerhub_username` and `dockerhub_token` to secrets.yaml before
-  # rebuilding, or sops-install-secrets fails activation.
-  sops.secrets.dockerhub_username = {
-    group = "podman";
-    mode = "0440";
+  options.thinkpad.githubRunnerVms = {
+    # Conservative per-VM defaults for a laptop that is also a desktop. The X1
+    # Carbon Gen 12 has a 12- to 16-core Core Ultra 7 and (judging by the 7.8G
+    # /run tmpfs, 25% of RAM) 32 GB: two VMs at 4 vCPU / 8 GiB leave the host
+    # half its RAM and most of its cores. Raise per box if jobs OOM.
+    vcpu = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 4;
+      description = "vCPUs per GitHub runner microVM.";
+    };
+    memMiB = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 8192;
+      description = ''
+        RAM per GitHub runner microVM, in MiB. With virtiofs the guest memory
+        is shared, so the host cannot reclaim it while the VM runs; the guest's
+        page cache will grow to fill it.
+      '';
+    };
+    # Volumes are sparse files under /var/lib/microvms/<name>; these are caps,
+    # not allocations. On the 482 G root, two VMs at the defaults can reach
+    # 2 x 208 G only if every volume fills, and tmp/nix-store restart empty.
+    varMiB = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 96 * 1024;
+      description = "Persistent /var volume per VM (caches, podman images, runner state), in MiB.";
+    };
+    tmpMiB = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 48 * 1024;
+      description = "Scratch /tmp volume per VM (cargo targets), in MiB. Recreated on every VM start.";
+    };
+    nixStoreMiB = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 64 * 1024;
+      description = "Writable /nix/store layer per VM, in MiB. Recreated on every VM start.";
+    };
   };
-  sops.secrets.dockerhub_token = {
-    group = "podman";
-    mode = "0440";
-  };
 
-  services.github-runners = forEachRunner (r: lib.nameValuePair (runnerName r) (mkRunner r));
+  config = {
+    assertions = map (r: {
+      assertion = builtins.stringLength (netFor r).tap <= 15 && r.idx <= 60;
+      message = "github runner ${runnerName r}: tap name over 15 chars, or too many runners for ${vmSubnet}";
+    }) runners;
 
-  # Fixed system users/groups backing each runner's `user`/`group` (the
-  # github-runners module runs the service as them but does NOT create them).
-  # isSystemUser keeps them in the system uid range, out of login space.
-  users.groups = forEachRunner (r: lib.nameValuePair (runnerUser r) { });
-  users.users = lib.mkMerge [
-    (forEachRunner (
+    # Classic PAT (scope `repo`); shared by all repos (a classic `repo`-scoped
+    # PAT can manage runners on any repo the account owns). Used ONLY on the
+    # host, by ghr-token-<name>.service, to mint per-repo registration tokens.
+    sops.secrets.github_runner_token = { };
+
+    # Docker Hub credentials (username + a read-only access token) that each
+    # VM's job-started hook bakes into its $DOCKER_CONFIG, so buildx pulls base
+    # images authenticated — Docker Hub's per-account limit instead of the
+    # anonymous per-IP one the shared sing-box exit trips. Root-only on the
+    # host; the token service copies them into the VMs' shares. They must
+    # exist in the secrets file, or sops-install-secrets fails activation.
+    sops.secrets.dockerhub_username = { };
+    sops.secrets.dockerhub_token = { };
+
+    microvm.vms = forEachRunner (
       r:
-      lib.nameValuePair (runnerUser r) {
-        isSystemUser = true;
-        group = runnerUser r;
-        description = "GitHub Actions runner ${runnerName r}";
+      lib.nameValuePair (runnerName r) {
+        config = import ./github-runner-vm.nix {
+          inherit r;
+          name = runnerName r;
+          net = netFor r;
+          sizing = cfg;
+        };
+        # Default for declarative VMs, spelled out: a rebuild that changes a
+        # VM restarts it, killing a job in flight — as restarting the runner
+        # services on the host did before.
+        restartIfChanged = true;
       }
-    ))
-    # Let the operator read those diagnostic logs without root (see the UMask
-    # note above). Membership grants exactly that and nothing else: the log
-    # directory is already 0755 and its files become 0640 group-owned, while the
-    # state directory stays 0700, so the OAuth credentials and the registration
-    # token remain unreachable. Read-only in effect — it changes nothing about
-    # what the runners do or what they can reach.
-    { "0xff".extraGroups = map runnerUser runners; }
-  ];
+    );
 
-  systemd.services = lib.mkMerge [
-    (forEachRunner (
-      r: lib.nameValuePair "github-runner-${runnerName r}-watchdog" (mkWatchdogService r)
-    ))
-    # StartLimitIntervalSec lives in [Unit], not [Service], so it can't go through
-    # serviceOverrides. Disable the start-rate limiter so repeated start failures can
-    # never wedge a unit into `failed` (start-limit-hit).
-    (forEachRunner (
-      r: lib.nameValuePair "github-runner-${runnerName r}" { startLimitIntervalSec = 0; }
-    ))
-  ];
+    systemd.services = lib.mkMerge [
+      (forEachRunner (r: lib.nameValuePair "ghr-token-${runnerName r}" (mkTokenService r)))
+      # Give each tap its host address once microvm.nix has created it, and no
+      # IPv6 at all (no link-local path from the guest to the host's sshd).
+      (forEachRunner (
+        r:
+        let
+          n = netFor r;
+        in
+        lib.nameValuePair "microvm-tap-interfaces@${runnerName r}" {
+          serviceConfig.ExecStartPost = [
+            "${pkgs.procps}/bin/sysctl -w net.ipv6.conf.${n.tap}.disable_ipv6=1"
+            "${pkgs.iproute2}/bin/ip addr replace ${n.hostIp}/30 dev ${n.tap}"
+          ];
+        }
+      ))
+    ];
+    systemd.timers = forEachRunner (r: lib.nameValuePair "ghr-token-${runnerName r}" (mkTokenTimer r));
 
-  # The runner's diagnostic logs (/var/log/github-runner/<name>/Runner_*.log and
-  # Worker_*.log, the module's LogsDirectory) are new files per run and never
-  # pruned — an ephemeral runner starts a fresh process per job, so they pile
-  # up. Age out anything older than two weeks; the journal keeps the summary.
-  systemd.tmpfiles.rules = [ "e /var/log/github-runner - - - 14d" ];
+    # Root-only parent of the per-VM secret shares. Named to sort before
+    # microvm.nix's own 10-microvm entry for the share directories, which
+    # would otherwise create them 0775 microvm:kvm.
+    systemd.tmpfiles.settings."05-gh-runner-secrets" = {
+      ${secretsRoot}.d = {
+        user = "root";
+        group = "root";
+        mode = "0700";
+      };
+    }
+    // forEachRunner (
+      r:
+      lib.nameValuePair "${secretsRoot}/${runnerName r}" {
+        d = {
+          user = "root";
+          group = "root";
+          mode = "0755";
+        };
+      }
+    );
 
-  systemd.timers = forEachRunner (
-    r: lib.nameValuePair "github-runner-${runnerName r}-watchdog" (mkWatchdogTimer r)
-  );
+    # NetworkManager must leave the taps alone (they are configured above).
+    networking.networkmanager.unmanaged = [ "interface-name:ghr-*" ];
+
+    # Route for the VMs. Host podman already flips this on at runtime whenever
+    # it sets up a network; this makes it unconditional.
+    boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
+
+    # KSM (microvm.nix turns it on by default) buys nothing here — virtiofs
+    # needs shared guest memory, which KSM cannot merge — and only adds a
+    # cross-VM memory side channel and a scanning thread on a laptop.
+    hardware.ksm.enable = false;
+
+    # VM traffic: out through the sing-box TUN or nowhere.
+    #
+    # - raw PREROUTING (ghr-pre): per-VM source anti-spoofing, then drop every
+    #   private/host/tailnet destination except the fakeip pool.
+    # - FORWARD (ghr-fwd): from a VM only to tun0, i.e. fail-closed when
+    #   sing-box is down; into a VM only replies.
+    # - nat POSTROUTING (ghr-nat): masquerade to tun0's address — the same
+    #   shape podman's netavark gives container traffic, which is the path
+    #   proven to work through this TUN.
+    # - INPUT: nothing from a VM reaches a host socket (sshd listens everywhere).
+    #
+    # The firewall flushes nixos-fw itself on reload; the ghr-* chains are
+    # (re)built idempotently here and torn down in extraStopCommands.
+    networking.firewall.extraCommands = ''
+      ${ipt} -t raw -N ghr-pre 2>/dev/null || ${ipt} -t raw -F ghr-pre
+      ${ipt} -t raw -C PREROUTING -i ghr-+ -j ghr-pre 2>/dev/null \
+        || ${ipt} -t raw -I PREROUTING 1 -i ghr-+ -j ghr-pre
+      ${lib.concatMapStrings (
+        r:
+        let
+          n = netFor r;
+        in
+        ''
+          ${ipt} -t raw -A ghr-pre -i ${n.tap} ! -s ${n.guestIp} -j DROP
+        ''
+      ) runners}
+      ${ipt} -t raw -A ghr-pre -d ${fakeipRange} -j RETURN
+      ${lib.concatMapStrings (d: ''
+        ${ipt} -t raw -A ghr-pre -d ${d} -j DROP
+      '') blockedDsts}
+
+      ${ipt} -N ghr-fwd 2>/dev/null || ${ipt} -F ghr-fwd
+      ${ipt} -C FORWARD -j ghr-fwd 2>/dev/null || ${ipt} -I FORWARD 1 -j ghr-fwd
+      ${ipt} -A ghr-fwd -i ghr-+ -o tun0 -j ACCEPT
+      ${ipt} -A ghr-fwd -i ghr-+ -j DROP
+      ${ipt} -A ghr-fwd -o ghr-+ -i tun0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+      ${ipt} -A ghr-fwd -o ghr-+ -j DROP
+
+      ${ipt} -t nat -N ghr-nat 2>/dev/null || ${ipt} -t nat -F ghr-nat
+      ${ipt} -t nat -C POSTROUTING -j ghr-nat 2>/dev/null || ${ipt} -t nat -I POSTROUTING 1 -j ghr-nat
+      ${ipt} -t nat -A ghr-nat -s ${vmSubnet} -o tun0 -j MASQUERADE
+
+      ${ipt} -I nixos-fw 1 -i ghr-+ -j DROP
+      ${ip6t} -I nixos-fw 1 -i ghr-+ -j DROP
+    '';
+    networking.firewall.extraStopCommands = ''
+      ${ipt} -t raw -D PREROUTING -i ghr-+ -j ghr-pre 2>/dev/null || true
+      ${ipt} -t raw -F ghr-pre 2>/dev/null || true
+      ${ipt} -t raw -X ghr-pre 2>/dev/null || true
+      ${ipt} -D FORWARD -j ghr-fwd 2>/dev/null || true
+      ${ipt} -F ghr-fwd 2>/dev/null || true
+      ${ipt} -X ghr-fwd 2>/dev/null || true
+      ${ipt} -t nat -D POSTROUTING -j ghr-nat 2>/dev/null || true
+      ${ipt} -t nat -F ghr-nat 2>/dev/null || true
+      ${ipt} -t nat -X ghr-nat 2>/dev/null || true
+    '';
+  };
 }

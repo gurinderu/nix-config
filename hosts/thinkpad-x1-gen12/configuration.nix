@@ -131,11 +131,17 @@
       dockerSocket.enable = true; # docker-compatible socket at /run/docker.sock
       defaultNetwork.settings.dns_enabled = true; # DNS between containers
     };
-    # Pin the subnet pool for user-created networks (GitHub Actions per-job
-    # networks, Testcontainers) to 10.89.0.0/16 so it stays inside the
+    # Host podman is the interactive user's only: the CI runners moved into
+    # microVMs with their own rootless podman (github-runner.nix) and no
+    # longer touch this socket.
+    #
+    # Pin the subnet pool for user-created networks (`docker network create`,
+    # compose, Testcontainers) to 10.89.0.0/16 so it stays inside the
     # 10.88.0.0/15 that sing-box's TUN excludes (users/gurinderu/
     # sing-box-config-linux.nix). netavark's built-in pool would otherwise
     # spill into 10.90.0.0/15 and beyond, which auto_route sends to tun0.
+    # Its top /24, 10.89.255.0/24, carries the runner VMs' taps; netavark
+    # skips subnets already live on an interface.
     containers.containersConf.settings.network.default_subnet_pools = [
       {
         base = "10.89.0.0/16";
