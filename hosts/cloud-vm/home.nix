@@ -21,6 +21,9 @@
     # osewa server (persistent terminals, next to mosh); enrollment, linger
     # and the firewall are manual (see module and README).
     ./osewa.nix
+    # Memory-capped systemd unit for the herdr server; defined, not yet
+    # started (cutover steps in the module and README).
+    ./herdr-server.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
   ];
