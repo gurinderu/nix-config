@@ -81,6 +81,15 @@
           inherit system;
           config.allowUnfree = true;
         };
+      # The hosts' own nixpkgs instance (hosts/cloud-vm/default.nix and the
+      # Mac's nixpkgs.config both allow unfree): for exposing unfree local
+      # packages, which plain legacyPackages refuses to evaluate.
+      mkPkgsUnfree =
+        system:
+        import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
     in
     {
       formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-tree;
@@ -117,6 +126,27 @@
       # `nix run .#osewa.updateScript` work.
       packages.aarch64-darwin.osewa = nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/osewa { };
       packages.x86_64-linux.osewa = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/osewa { };
+
+      # codebase-memory-mcp (code-graph MCP server, UI variant) — repack of
+      # upstream's release binaries; every host gets it from users/common
+      # (home.nix + codebase-memory-ui.nix). Exposed so
+      # `nix build .#codebase-memory-mcp` and
+      # `nix run .#codebase-memory-mcp.updateScript` work.
+      packages.aarch64-darwin.codebase-memory-mcp =
+        nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/codebase-memory-mcp
+          { };
+      packages.x86_64-linux.codebase-memory-mcp =
+        nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/codebase-memory-mcp
+          { };
+
+      # moshi-hook (Moshi iOS app bridge) — repack of upstream's release,
+      # unfree (closed source), hence mkPkgsUnfree. cloud-vm gets it from
+      # users/common/moshi-hook.nix; the darwin build is exposed too since
+      # upstream ships one. Exposed so `nix build .#moshi-hook` works.
+      packages.aarch64-darwin.moshi-hook =
+        (mkPkgsUnfree "aarch64-darwin").callPackage ./pkgs/moshi-hook
+          { };
+      packages.x86_64-linux.moshi-hook = (mkPkgsUnfree "x86_64-linux").callPackage ./pkgs/moshi-hook { };
 
       # The CVE snapshot net-observer's neighbour scanner reads on the Mac
       # (see pkgs/cve-snapshot). Exposed on both systems so the unpack recipe
