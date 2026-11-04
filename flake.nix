@@ -36,7 +36,7 @@
     # nix-claude-code: Anthropic's official prebuilt Claude Code binary,
     # repacked (fetchurl + autoPatchelf, auto-updater disabled in the wrapper)
     # and bumped upstream hourly; also offers a stable channel and per-version
-    # pins. Used on cloud-vm. Pure binary repack, so it follows our nixpkgs —
+    # pins. Used on cloud-vm and the thinkpad. Pure binary repack, so it follows our nixpkgs —
     # its own unstable pin would only add a lock node.
     # Advance with `nix flake update nix-claude-code`.
     nix-claude-code.url = "github:ryoppippi/nix-claude-code";
