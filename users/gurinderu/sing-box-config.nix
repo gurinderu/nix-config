@@ -581,7 +581,7 @@ in
       url = "https://www.gstatic.com/generate_204";
       # 3m — the sing-box upstream default; the previous 1m was an
       # unexplained 3x-override. A per-minute beacon means a fresh REALITY
-      # handshake to all 7 endpoints every 60s (no multiplex) — exactly the
+      # handshake to every member endpoint every 60s (no multiplex) — exactly the
       # "frequency" leg of the ASN+JA3+frequency triad this config claims to
       # break. (NB the 2026-09-16 coworking bisection initially blamed this
       # beacon for the ban cycle; that verdict was RETRACTED the same day —
@@ -628,9 +628,11 @@ in
       # its default. Moot on the thinkpad today only because clashApi is off
       # there, so nothing can flip its selector in the first place.
       # A forgotten flip therefore presents as "tun dead, direct fine"
-      # indefinitely; net-observer carries sel-main= in TICK for exactly this,
-      # and its watchdog declines to kick while block-out is selected (a
-      # fresh process restores the selection from cache.db, curing nothing).
+      # indefinitely; net-observerd carries sel-main= in TICK for exactly
+      # this. Any kicker must not restart sing-box while block-out is selected
+      # (a fresh process restores the selection from cache.db, curing
+      # nothing) — the removed shell watchdog declined to, and the acting bar
+      # for net-observerd in hosts/mac_aarch64/default.nix carries the gate.
       type = "selector";
       tag = "vless-main";
       outbounds = [
@@ -775,7 +777,8 @@ in
     # Default everything through the VPN; direct rules above are the
     # exceptions. Blocked-in-Russia resources thus also go via the VPN.
     # vless-main is the kill-switch selector wrapping vless-auto (fastest
-    # backend, with the RU node as last-resort fallback).
+    # gRPC backend; foreign-only, fail-closed — no RU fallback) plus the
+    # manual TCP/Vision fallbacks and block-out.
     final = "vless-main";
   }
   # Egress interface: exactly one of these keys is emitted (they are

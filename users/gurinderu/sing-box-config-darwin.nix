@@ -114,8 +114,13 @@ import ./sing-box-config.nix {
     }
     {
       # NetBird's self-hosted control plane must resolve to a REAL routable IP,
-      # never a fakeip, or the paired direct-out route rule above has nothing
-      # routable to send and the peer never registers. (Measured 2026-07-29
+      # never a fakeip. The daemon's control-plane session now goes through
+      # vless-main via the netbird exception route rule above, which matches
+      # these hosts by SNI sniffing of a genuine connection to a real IP (see
+      # its comment); a fakeip would also be unroutable for anything of the
+      # daemon's that falls through to the process_name direct-out bypass.
+      # (Back when the control plane itself went direct-out, a fakeip left
+      # the peer unregistered — measured 2026-07-29
       # before this rule existed: SING_BOX_NETBIRD_RELAY_DOMAIN -> 198.18.2.192,
       # a fakeip — and the same answer came back even for an explicit
       # `dig @77.88.8.8`, since the DNS listener hijacks those too.)
@@ -131,8 +136,8 @@ import ./sing-box-config.nix {
       # answering with a REAL routable IP even while the proxy is down —
       # the condition under which one most wants the mesh up.
       # Control-plane host only — the dashboard must keep getting a fakeip so
-      # it goes through the proxy. This real IP exists for the daemon's
-      # process_name bypass; see the note where that route rule used to be.
+      # it goes through the proxy. This real IP exists for the daemon's route
+      # rules above; see also the NOTE on why there is no domain route rule.
       domain = [
         "SING_BOX_NETBIRD_MGMT_DOMAIN"
         "SING_BOX_NETBIRD_RELAY_DOMAIN"
@@ -141,7 +146,7 @@ import ./sing-box-config.nix {
     }
     {
       # The NetBird dashboard (a public page) fetches the IdP discovery document
-      # from SING_BOX_IDP_DOMAIN. A fakeip answer lands in 172.24.0.0/16 —
+      # from SING_BOX_IDP_DOMAIN. A fakeip answer lands in 172.24.0.0/14 —
       # private space — and Chrome's Local Network Access then blocks that
       # public-to-local fetch ("Permission was denied for this request to access
       # the `local` address space"), so the dashboard fails with
