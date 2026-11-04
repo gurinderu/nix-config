@@ -22,21 +22,23 @@
     8
   ];
 
-  # Per-server VLESS transport (structural, NOT secret — the server IP/keys are
-  # the sensitive bits and stay in sops). "tcp" is XTLS-Reality with
-  # flow=xtls-rprx-vision; "grpc" is Reality over gRPC (gun) with no flow.
+  # Per-server VLESS transport (structural, NOT secret). Each node's address,
+  # port, UUID and Reality keys are the sensitive bits and live only in sops
+  # (sing_box_vless_N_*); this repo is public, so comments here and elsewhere
+  # refer to nodes by label and index, never by address. "tcp" is XTLS-Reality
+  # with flow=xtls-rprx-vision; "grpc" is Reality over gRPC (gun) with no flow.
   # Consumed by mkVless in sing-box-config.nix. Indices absent here default to
   # "tcp". sing-box 1.13 has no xhttp transport, so the subscription's two xhttp
-  # nodes are intentionally omitted (their IPs are covered by the grpc nodes).
+  # nodes are intentionally omitted (their hosts are covered by the grpc nodes).
   transports = {
-    "1" = "tcp"; # 🇩🇪 Germany 1        94.103.168.85:443
-    "2" = "grpc"; # 🇩🇪 Germany 2        94.103.168.85:2053
-    "3" = "grpc"; # 🇩🇪 Germany 3        94.103.168.145:2053
-    "4" = "tcp"; # 🇵🇱 Poland 1         81.15.150.138:443
-    "5" = "grpc"; # 🇵🇱 Poland 2         81.15.150.138:2053
-    "6" = "grpc"; # 🇵🇱 Poland 3         81.15.150.144:2053
-    "7" = "tcp"; # 🇩🇪 Germany bridge 1 158.160.251.55:443 (Yandex Cloud / RU exit)
-    "8" = "tcp"; # foreign exit         194.87.208.142:443 (kept, not in subscription)
+    "1" = "tcp"; # 🇩🇪 Germany 1 (node 1)
+    "2" = "grpc"; # 🇩🇪 Germany 2 (node 2, same host as node 1)
+    "3" = "grpc"; # 🇩🇪 Germany 3 (node 3)
+    "4" = "tcp"; # 🇵🇱 Poland 1 (node 4)
+    "5" = "grpc"; # 🇵🇱 Poland 2 (node 5, same host as node 4)
+    "6" = "grpc"; # 🇵🇱 Poland 3 (node 6)
+    "7" = "tcp"; # 🇩🇪 Germany bridge 1 (node 7, Yandex Cloud / RU exit)
+    "8" = "tcp"; # foreign exit (node 8, kept, not in subscription)
   };
 
   # sops key field -> placeholder token stem (the SING_BOX_<STEM>_N form emitted
