@@ -511,8 +511,9 @@ in
     # traffic — including RKN-blocked sites — through a Russian egress. Now the
     # fleet is foreign-only and fail-closed: when every member is down, dials
     # fail and no traffic flows anywhere. To bring the node back as a manual
-    # escape hatch, re-add `(mkVless 7)` here and list "vless-out-7" in the
-    # vless-main selector below; its SING_BOX_*_7 secrets are still provisioned.
+    # escape hatch, re-add `(mkVless 7)` here, list "vless-out-7" in the
+    # vless-main selector below and add 7 back to `servers` in
+    # sing-box-secrets.nix (its sing_box_vless_7_* keys must then exist in sops).
     # vless-out-8 is a foreign exit not present in the niao subscription, kept as
     # an extra urltest candidate so the auto group has more foreign backends to
     # fail over between.
