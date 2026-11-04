@@ -36,7 +36,7 @@ let
   # in one script because the runner accepts a single hook path; the store path
   # must end in .sh or the runner rejects the hook.
   #
-  # 1. Authenticate Docker Hub. The three runners share one sing-box exit IP, so
+  # 1. Authenticate Docker Hub. All runners share one sing-box exit IP, so
   #    anonymous pulls of the base images (rust/debian/nginx) trip Docker Hub's
   #    per-IP rate limit (`toomanyrequests`) — the failure that killed the warp
   #    #108 container build and left warp-frontend/-bot:main stale. `buildx`
@@ -57,7 +57,7 @@ let
   #    own job is exactly one worker; if we see more than one, another runner is
   #    mid-job, so we skip the sweep and leave its containers alone. This needs
   #    the runner's ProtectProc != "invisible" (set in serviceOverrides below) so
-  #    the hook can see other DynamicUsers' workers in /proc.
+  #    the hook can see the other runner users' workers in /proc.
   jobStarted = pkgs.writeShellScript "gh-runner-job-started.sh" ''
     set -u
 
@@ -143,19 +143,20 @@ let
       CARGO_HOME = "/var/cache/github-runner-${runnerName r}/cargo";
       SCCACHE_DIR = "/var/cache/github-runner-${runnerName r}/sccache";
       # Build cargo target/ on disk AND on an exec-capable mount. Under DynamicUser
-      # systemd mounts CacheDirectory/StateDirectory (/var/cache,/var/lib) noexec,
-      # so build scripts / proc-macros in target/ there die with "Permission denied
+      # (the module default, before the fixed users above) systemd mounted
+      # CacheDirectory/StateDirectory (/var/cache,/var/lib) noexec, so build
+      # scripts / proc-macros in target/ there died with "Permission denied
       # (os error 13)". The service PrivateTmp /tmp is the right spot: disk-backed
       # (ext4 on the 482G /, NOT the small /run tmpfs), exec-allowed, and private +
       # wiped per service instance (no cross-runner collision). Fixes the ENOSPC
       # from 3 parallel builds sharing the 7.8G /run tmpfs for their checkouts.
       CARGO_TARGET_DIR = "/tmp/cargo-target";
-      # ...and a DISTINCT sccache server port per instance. All three runners
-      # share this one host; without this each sccache server defaults to port
-      # 4226, so two concurrent jobs collide and the loser dies with
+      # ...and a DISTINCT sccache server port per instance. All runners share
+      # this one host; without this each sccache server defaults to port 4226,
+      # so two concurrent jobs collide and the loser dies with
       # "sccache: failed to spawn ... (exit 254)", failing whichever job was
       # compiling (usually the heavy Workspace-tests job). Per-instance port
-      # (warp-1=4226, warp-2=4227, warp-3=4228, trading-1=4229) lets the parallel
+      # 4225 + idx (today warp-1=4226, trading-1=4227) lets the parallel
       # servers coexist. Inherited by the job steps, so no per-repo ci.yml change needed.
       SCCACHE_SERVER_PORT = toString (4225 + r.idx);
       # Runner runs this before every job -> seed docker.io auth + sweep leaked
@@ -263,8 +264,8 @@ in
   # hook bakes into each runner's $DOCKER_CONFIG so buildx pulls base images
   # authenticated — Docker Hub's per-account limit instead of the anonymous
   # per-IP one the shared sing-box exit trips. Group-readable by `podman` because
-  # the hook runs as the DynamicUser runner (supplementary group `podman`), not
-  # root. Add `dockerhub_username` and `dockerhub_token` to secrets.yaml before
+  # the hook runs as the runner's own system user (supplementary group
+  # `podman`), not root. Add `dockerhub_username` and `dockerhub_token` to secrets.yaml before
   # rebuilding, or sops-install-secrets fails activation.
   sops.secrets.dockerhub_username = {
     group = "podman";
@@ -310,6 +311,12 @@ in
       r: lib.nameValuePair "github-runner-${runnerName r}" { startLimitIntervalSec = 0; }
     ))
   ];
+
+  # The runner's diagnostic logs (/var/log/github-runner/<name>/Runner_*.log and
+  # Worker_*.log, the module's LogsDirectory) are new files per run and never
+  # pruned — an ephemeral runner starts a fresh process per job, so they pile
+  # up. Age out anything older than two weeks; the journal keeps the summary.
+  systemd.tmpfiles.rules = [ "e /var/log/github-runner - - - 14d" ];
 
   systemd.timers = forEachRunner (
     r: lib.nameValuePair "github-runner-${runnerName r}-watchdog" (mkWatchdogTimer r)
