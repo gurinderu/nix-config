@@ -230,7 +230,7 @@ in
     # images authenticated — Docker Hub's per-account limit instead of the
     # anonymous per-IP one the shared sing-box exit trips. Root-only on the
     # host; the token service copies them into the VMs' shares. They must
-    # exist in the secrets file, or sops-install-secrets fails activation.
+    # exist in secrets/thinkpad.yaml, or sops-install-secrets fails activation.
     sops.secrets.dockerhub_username = { };
     sops.secrets.dockerhub_token = { };
 

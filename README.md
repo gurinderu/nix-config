@@ -136,11 +136,6 @@ the Mac's key and the admin key, so it can edit every file.
 `shared.yaml` explicitly. Put a new secret in the file whose recipients are
 exactly the hosts that read it, e.g. `sops secrets/mac.yaml`.
 
-Migration: until `scripts/split-sops-secrets.sh` has been run on the Mac
-(`nix shell nixpkgs#sops nixpkgs#yq-go -c bash scripts/split-sops-secrets.sh`)
-and its output committed, every role still resolves to the old single
-`secrets/secrets.yaml`.
-
 # GitHub runner microVMs (thinkpad)
 
 The warp and trading runners run in one cloud-hypervisor microVM each
