@@ -22,11 +22,23 @@
 #
 # The unit mirrors upstream's (`service install`: KillMode=process, so a
 # restart ends only the server and every session's holder lives on;
-# Restart=on-failure, RestartSec=2, default.target), with the store path in
-# ExecStart and OSEWA_AUTO_UPDATE=off. That env var beats settings.json, and
-# with it the server never runs its hourly check that would replace its own
-# binary. `osewa set auto-update off` at activation covers CLI use on the VM
-# (a daily check after interactive commands otherwise).
+# RestartSec=2, default.target), with the store path in ExecStart and
+# OSEWA_AUTO_UPDATE=off. That env var beats settings.json, and with it the
+# server never runs its hourly check that would replace its own binary.
+# `osewa set auto-update off` at activation covers CLI use on the VM (a daily
+# check after interactive commands otherwise).
+#
+# Restart=always rather than upstream's on-failure: the server should be up
+# whenever the unit is enabled, a clean exit included. moshi-hook (0.4.48),
+# when the phone enrolls in osewa while no server is running, may run `osewa
+# service install`, which writes its own unit over this one; a running
+# server keeps it off that path.
+#
+# No PATH here: sessions and exec never see the server's environment. osewa
+# builds theirs from scratch (session_env in upstream's crates/paths) with a
+# fixed /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin plus what the client
+# sends, and looks up `exec` / `new -- cmd` in that. Hence `exec --env PATH=`
+# and absolute paths for nix tools (README "osewa").
 #
 # A user service only runs without a login session with lingering on
 # (`sudo loginctl enable-linger ubuntu`, README). The firewall (README) keeps
@@ -58,7 +70,7 @@ in
       ExecStart = "${osewa}/bin/osewa server";
       Environment = [ "OSEWA_AUTO_UPDATE=off" ];
       KillMode = "process";
-      Restart = "on-failure";
+      Restart = "always";
       RestartSec = 2;
     };
     Install.WantedBy = [ "default.target" ];

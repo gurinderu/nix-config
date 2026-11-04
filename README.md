@@ -171,7 +171,8 @@ port forwards and exec as well. mosh stays as it is.
   the VM and the Mac together.
 - `hosts/cloud-vm/osewa.nix`: `osewa` on PATH, `~/.local/bin/osewa` symlinked
   to it (what `ssh host cmd` finds), and the `osewa` systemd user service
-  (`osewa server` from the store path, `OSEWA_AUTO_UPDATE=off`).
+  (`osewa server` from the store path, `OSEWA_AUTO_UPDATE=off`,
+  `Restart=always`).
 - `users/gurinderu/osewa.nix`: the client on the Mac.
 
 Both activations run `osewa set auto-update off`: nix owns upgrades, and
@@ -217,16 +218,22 @@ Use from the Mac:
 ```
 osewa attach fluence          # attach to a session (or create one): zsh -l
 osewa attach fluence <id>     # a given one; ~. detaches
-osewa new fluence -- herdr    # a session running herdr
+osewa new fluence -- /home/ubuntu/.nix-profile/bin/herdr   # a session running herdr
 osewa ls fluence
-osewa exec fluence -- zsh -lc 'git -C ~/projects/nix-config status'
+osewa exec fluence --env PATH=/home/ubuntu/.nix-profile/bin:/usr/bin:/bin \
+  -- zsh -lc 'git -C ~/projects/nix-config status'
 osewa forward fluence 3000
 ```
 
-`exec` gets a bare PATH (`/usr/local/bin:/usr/bin:/bin:...`), so wrap nix
-tools in `zsh -lc`. osewa sessions have no `SSH_CONNECTION` and no
-`mosh-server` parent, so neither the zellij auto-attach nor the mosh-to-herdr
-hook runs in them.
+`exec` and `new <host> -- cmd` look the command up in osewa's own fixed PATH
+(`/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`), which holds no nix tools,
+zsh included. It is built per session, not taken from the server, so no
+setting in the unit can change it. Pass a PATH with `exec --env` (the client's
+entries win) or give `new` an absolute path. Plain `attach` / `new` run the
+passwd shell by its absolute path as `zsh -l`, which sets the usual PATH.
+
+osewa sessions have no `SSH_CONNECTION` and no `mosh-server` parent, so
+neither the zellij auto-attach nor the mosh-to-herdr hook runs in them.
 
 On the VM: `systemctl --user status osewa`, `journalctl --user -u osewa`,
 `ss -lunpt | grep 7322`. A switch that changes the unit restarts the server.
