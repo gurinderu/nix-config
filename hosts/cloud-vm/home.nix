@@ -238,8 +238,13 @@
   # programs look for them.
   targets.genericLinux.enable = true;
 
-  # ~/.config/nix/nix.conf. Nix here is a single-user install owned by this
-  # user, so these substituters apply without any trusted-users setup.
+  # ~/.config/nix/nix.conf. Nix here is a multi-user (daemon) install and
+  # this user is not in trusted-users, so the daemon only uses these
+  # substituters because /etc/nix/nix.conf lists them in
+  # extra-trusted-substituters, with their keys (one-time root step, README
+  # "Cloud VM"). The keys live only there: a client-side trusted-public-keys
+  # is a restricted setting the daemon ignores, with a warning on every
+  # command.
   # Binary caches for the agent inputs: clauth/codegraph build from source, and
   # cache.numtide.com only hits because llm-agents keeps its own nixpkgs pin.
   nix = {
@@ -253,10 +258,16 @@
         "https://cache.numtide.com"
         "https://ryoppippi.cachix.org"
       ];
-      extra-trusted-public-keys = [
-        "niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g="
-        "ryoppippi.cachix.org-1:b2LbtWNvJeL/qb1B6TYOMK+apaCps4SCbzlPRfSQIms="
-      ];
+    };
+    # Weekly `nix-collect-garbage --delete-older-than 14d` as this user: drops
+    # this user's profile generations (home-manager, nix-env) older than two
+    # weeks, then collects the whole store through the daemon. Persistent
+    # catches up on a run missed while the VM was off.
+    gc = {
+      automatic = true;
+      dates = "weekly";
+      options = "--delete-older-than 14d";
+      persistent = true;
     };
   };
 
