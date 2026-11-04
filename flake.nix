@@ -110,6 +110,14 @@
         nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/socktainer
           { };
 
+      # osewa (persistent remote terminals) — repack of upstream's release
+      # binaries at one version for both ends: the server on cloud-vm
+      # (hosts/cloud-vm/osewa.nix), the client on the Mac
+      # (users/gurinderu/osewa.nix). Exposed so `nix build .#osewa` and
+      # `nix run .#osewa.updateScript` work.
+      packages.aarch64-darwin.osewa = nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/osewa { };
+      packages.x86_64-linux.osewa = nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/osewa { };
+
       # The CVE snapshot net-observer's neighbour scanner reads on the Mac
       # (see pkgs/cve-snapshot). Exposed on both systems so the unpack recipe
       # is buildable/testable off-Mac (`nix build .#cve-snapshot`); the darwin

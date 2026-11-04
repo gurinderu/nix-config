@@ -158,3 +158,80 @@ Notifications go to the Warp tab whose `mosh-client` talks to the VM (the one
 most recently typed into, if several). With no such tab they are dropped and
 logged. Revoke the key: delete `~/.ssh/authorized_keys2` on the VM, or set
 `macPubKey = null` and switch.
+
+# osewa (persistent terminals, next to mosh)
+
+[osewa](https://github.com/rjyo/osewa) keeps the shell on the VM and reaches
+it over QUIC (UDP 7322), falling back to a TLS WebSocket (TCP 7322) where UDP
+is blocked. Sessions survive roaming, sleep and server restarts, and it does
+port forwards and exec as well. mosh stays as it is.
+
+- `pkgs/osewa`: upstream's release binaries repacked, one version for both
+  ends (they must match). Bump with `nix run .#osewa.updateScript`, then switch
+  the VM and the Mac together.
+- `hosts/cloud-vm/osewa.nix`: `osewa` on PATH, `~/.local/bin/osewa` symlinked
+  to it (what `ssh host cmd` finds), and the `osewa` systemd user service
+  (`osewa server` from the store path, `OSEWA_AUTO_UPDATE=off`).
+- `users/gurinderu/osewa.nix`: the client on the Mac.
+
+Both activations run `osewa set auto-update off`: nix owns upgrades, and
+osewa must never replace its own binary.
+
+Once, on the VM, so the user service runs without a login session, and to
+accept 7322 over tailscale and netbird only (same pattern as mosh above):
+
+```
+sudo loginctl enable-linger ubuntu
+sudo ufw allow in on tailscale0 to any port 7322 proto tcp
+sudo ufw allow in on tailscale0 to any port 7322 proto udp
+sudo ufw allow in on wt0 to any port 7322 proto tcp
+sudo ufw allow in on wt0 to any port 7322 proto udp
+sudo ufw deny 7322/tcp
+sudo ufw deny 7322/udp
+```
+
+tailscale0 and wt0 are already accepted ahead of ufw (`ts-input`, netbird's
+`-i wt0 -j ACCEPT`), so the deny rules are what matters: they close 7322 on the
+public interface.
+
+Enroll the Mac, once (after both switches):
+
+```
+osewa login ubuntu@100.72.145.54 --no-install --name fluence
+```
+
+`--no-install` is required. It makes `login` run only `osewa enroll && osewa
+server --daemon` over ssh: enroll adds the Mac's key to `~/.config/osewa/devices`
+on the VM, and `server --daemon` sees the service already running and leaves
+it alone. Ignore the hint `login` prints afterwards ("won't come back after
+... reboots; ... --service"): the systemd unit and linger take care of that.
+Don't use plain `login` (it copies a binary to `~/.local/bin/osewa`), `login
+--service` (it writes its own unit over home-manager's), or `osewa update
+fluence`. Each of them replaces a file nix owns. To use netbird instead,
+log in with `ubuntu@100.90.90.180` (or `--addr fluence.fluence.nb:7322`). The
+server address saved on the Mac is the ssh target's host, port 7322. Keys and
+hosts are in `~/.config/osewa` on both ends.
+
+Use from the Mac:
+
+```
+osewa attach fluence          # attach to a session (or create one): zsh -l
+osewa attach fluence <id>     # a given one; ~. detaches
+osewa new fluence -- herdr    # a session running herdr
+osewa ls fluence
+osewa exec fluence -- zsh -lc 'git -C ~/projects/nix-config status'
+osewa forward fluence 3000
+```
+
+`exec` gets a bare PATH (`/usr/local/bin:/usr/bin:/bin:...`), so wrap nix
+tools in `zsh -lc`. osewa sessions have no `SSH_CONNECTION` and no
+`mosh-server` parent, so neither the zellij auto-attach nor the mosh-to-herdr
+hook runs in them.
+
+On the VM: `systemctl --user status osewa`, `journalctl --user -u osewa`,
+`ss -lunpt | grep 7322`. A switch that changes the unit restarts the server.
+Sessions survive that (`KillMode=process`), but only between builds that speak
+the same protocol and snapshot version (`osewa version --json`).
+
+herdr-notify finds the Warp tab by its `mosh-client`, so Warp tabs attached
+with osewa don't get agent notifications yet.
