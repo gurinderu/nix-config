@@ -138,7 +138,6 @@ in
       systemd.user.services.moshi-hook = {
         Unit = {
           Description = "Moshi hook daemon (agent hooks bridge, gateway 127.0.0.1:24543)";
-          After = [ "network-online.target" ];
         };
         Service = {
           Type = "simple";
