@@ -73,6 +73,7 @@ let
 
   pluginDir = "${config.xdg.dataHome}/herdr-notify/plugin";
   hookPath = "${config.home.profileDirectory}/bin/herdr-notify-hook";
+  linkPlugin = import ./herdr-plugin-link.nix { inherit lib pkgs herdr; };
 in
 {
   home.packages = [ herdr-notify ];
@@ -92,37 +93,12 @@ in
     command = ["${hookPath}"]
   '';
 
-  home.activation.herdrNotifyPlugin = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
-    hn_reg=$(${herdr}/bin/herdr plugin list --json 2>/dev/null \
-      | ${pkgs.python3}/bin/python3 -I -c '
-    import json, sys
-    try:
-        ps = json.load(sys.stdin)["result"]["plugins"]
-    except Exception:
-        sys.exit(1)
-    for p in ps:
-        if p.get("plugin_id") == "herdr-notify":
-            print(p.get("manifest_path") or "?")
-    ') || hn_reg="?error"
-    hn_want=$(readlink -f ${lib.escapeShellArg pluginDir}/herdr-plugin.toml)
-    case "$hn_reg" in
-      "?error")
-        echo "herdr-notify: could not read 'herdr plugin list'; plugin not linked (continuing)" >&2 ;;
-      "$hn_want")
-        : ;;
-      "")
-        if run ${herdr}/bin/herdr plugin link ${lib.escapeShellArg pluginDir}; then
-          echo "herdr-notify: plugin linked (if no events reach ~/.local/state/herdr-notify, restart herdr once)" >&2
-        else
-          echo "herdr-notify: 'herdr plugin link' failed (continuing)" >&2
-        fi ;;
-      *)
-        echo "herdr-notify: plugin registered from $hn_reg, relinking to $hn_want" >&2
-        run ${herdr}/bin/herdr plugin unlink herdr-notify || true
-        run ${herdr}/bin/herdr plugin link ${lib.escapeShellArg pluginDir} \
-          || echo "herdr-notify: 'herdr plugin link' failed (continuing)" >&2 ;;
-    esac
-  '';
+  home.activation.herdrNotifyPlugin = lib.hm.dag.entryAfter [ "linkGeneration" ] (linkPlugin {
+    id = "herdr-notify";
+    inherit pluginDir;
+    var = "hn";
+    linkedMsg = "plugin linked (if no events reach ~/.local/state/herdr-notify, restart herdr once)";
+  });
 
   home.activation.herdrNotifyAuthorizedKeys = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     hn_file="$HOME/.ssh/authorized_keys2"
