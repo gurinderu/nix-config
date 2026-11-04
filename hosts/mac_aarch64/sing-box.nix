@@ -208,9 +208,30 @@ let
   # the retry loops write them continuously), and the nix-gc/nix-optimise
   # logs added in ./configuration.nix. missingok already covers any of them
   # not existing yet.
+  #
+  # The second stanza covers the launchd USER agents' sinks in
+  # ~/Library/Logs (socktainer: ./socktainer.nix; herdr-notify, net-observer-
+  # bar: users/gurinderu/; codebase-memory-ui: users/common/) —
+  # same append-fd problem, nothing else rotates them. `su gurinderu staff`
+  # makes logrotate act as the owner there (it refuses to rotate in a
+  # directory writable by a non-root user otherwise, and the rotations stay
+  # owned by the user). Keep the paths in sync with those modules.
+  userLogs = "${config.users.users.gurinderu.home}/Library/Logs";
   logrotateConf = pkgs.writeText "sing-box-logrotate.conf" ''
     ${logPath} /var/log/net-observer.log /var/log/dns-fallback.log ${config.services.net-observer.logFile} /var/log/netbird.out.log /var/log/netbird.err.log /var/log/nix-gc.log /var/log/nix-optimise.log {
         su root wheel
+        size 20M
+        rotate 5
+        copytruncate
+        compress
+        delaycompress
+        missingok
+        notifempty
+        nomail
+    }
+
+    ${userLogs}/socktainer.log ${userLogs}/socktainer-error.log ${userLogs}/herdr-notify.log ${userLogs}/net-observer-bar.log ${userLogs}/codebase-memory-ui.log {
+        su gurinderu staff
         size 20M
         rotate 5
         copytruncate
