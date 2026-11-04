@@ -68,6 +68,55 @@ sudo ufw deny 60000:61000/udp
 sudo ufw --force enable
 ```
 
+The nix daemon must run from a store path that root's profile keeps alive.
+The `--daemon` installer here left `/nix/var/nix/profiles/default` (->
+`per-user/root/profile`) dangling and the units in `/etc/systemd/system`
+pointing straight at a store path that only user profiles held, so a GC could
+have deleted the running daemon's nix. Once, as root, put that nix into the
+default profile and point the units there:
+
+```
+N=$(readlink -f /etc/systemd/system/nix-daemon.service | sed 's|/lib/systemd/.*||')   # .../nix-2.35.2
+sudo $N/bin/nix-env -p /nix/var/nix/profiles/per-user/root/profile -i $N
+D=/nix/var/nix/profiles/default/lib/systemd/system
+sudo ln -sfn $D/nix-daemon.service /etc/systemd/system/nix-daemon.service
+sudo ln -sfn $D/nix-daemon.socket /etc/systemd/system/nix-daemon.socket
+sudo ln -sfn /etc/systemd/system/nix-daemon.socket /etc/systemd/system/sockets.target.wants/nix-daemon.socket
+sudo systemctl daemon-reload
+nix store info    # Store URL: daemon
+```
+
+(`-p per-user/root/profile` rather than `-p default`: `default` is a link to
+it, and `nix-env -p default` would replace that link with its own generations.)
+To upgrade the daemon later, `nix-env -p ... -i` a newer nix the same way and
+`sudo systemctl restart nix-daemon` when no build is running.
+
+The installer also wrote no `/etc/nix/nix.conf`. Without one the daemon
+ignores the binary caches from `nix.settings` in `hosts/cloud-vm/home.nix`
+("ignoring untrusted substituter", the user isn't trusted), so llm-agents and
+claude get built from source. Once, as root (`/etc/nix` is created read-only):
+
+```
+sudo chmod 755 /etc/nix
+sudo tee /etc/nix/nix.conf <<'NIXCONF'
+build-users-group = nixbld
+experimental-features = nix-command flakes
+extra-trusted-substituters = https://cache.numtide.com https://ryoppippi.cachix.org
+extra-trusted-public-keys = niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g= ryoppippi.cachix.org-1:b2LbtWNvJeL/qb1B6TYOMK+apaCps4SCbzlPRfSQIms=
+NIXCONF
+sudo systemctl restart nix-daemon    # when no build is running
+```
+
+`build-users-group = nixbld` is what the daemon used by default; writing it
+down keeps builds on the nixbld users. A cache added to `nix.settings` later
+needs its URL and key here too.
+
+home-manager runs `nix-collect-garbage --delete-older-than 14d` weekly
+(`nix.gc` in `hosts/cloud-vm/home.nix`, `systemctl --user list-timers
+nix-gc.timer`), which keeps two weeks of generations to roll back to. It only
+prunes this user's profiles; root's (`/nix/var/nix/profiles/per-user/root`)
+stay as they are.
+
 # netbird on cloud-vm
 
 `hosts/cloud-vm/netbird.nix` puts `netbird` on PATH and writes a systemd
