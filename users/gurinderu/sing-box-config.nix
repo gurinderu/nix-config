@@ -504,8 +504,8 @@ in
     (mkVless 4) # 🇵🇱 Poland 1 (tcp)
     (mkVless 5) # 🇵🇱 Poland 2 (grpc)
     (mkVless 6) # 🇵🇱 Poland 3 (grpc)
-    # vless-out-7 ("Germany bridge 1", the Russia-located Yandex Cloud exit,
-    # 158.160.x) is GONE from the config entirely (2026-07-24, user call). It
+    # vless-out-7 ("Germany bridge 1", the Russia-located Yandex Cloud exit)
+    # is GONE from the config entirely (2026-07-24, user call). It
     # used to be a latency-penalised last-resort in the urltest group, which
     # meant an outage of the foreign fleet silently rerouted ALL proxied
     # traffic — including RKN-blocked sites — through a Russian egress. Now the
@@ -517,7 +517,7 @@ in
     # vless-out-8 is a foreign exit not present in the niao subscription, kept as
     # an extra urltest candidate so the auto group has more foreign backends to
     # fail over between.
-    (mkVless 8) # foreign exit 194.87.208.142 (tcp)
+    (mkVless 8) # foreign exit (tcp)
     {
       # Route through whichever backend is fastest right now: urltest probes
       # each member on `interval` and picks the lowest-latency one. NB
@@ -562,19 +562,19 @@ in
       # Vision handshakes to re-raise the frequency signature.
       #
       # Order within gRPC still sets the frozen-during-incident default,
-      # cleanest first: Poland 3 (6, 81.15.150.144 — own IP, no failure record),
-      # then Poland 2 (5, shares the 81.15.150.138 that flaked 8h on
-      # 2026-09-15), then the chronic GHOSTNET 94.103.168.x pair (2, 3 — night
+      # cleanest first: Poland 3 (6 — own host, no failure record), then
+      # Poland 2 (5, shares Poland 1's host, which flaked 8h on 2026-09-15),
+      # then the chronic GHOSTNET pair (2, 3 — night
       # outages, MegaFon-blackholed, the 2026-09-05 EOF storm). Fail-closed if
       # all four are down (no auto egress until a manual flip to a TCP node) —
       # by design, better than silently flooding. Global for both consumers
       # (mac + thinkpad): same subscription, same fleet.
-      # (Server IPs deliberately not restated here — they are sops-encrypted
-      # in sing-box-secrets.nix, and comments in a git-tracked, store-readable
-      # file should not undo that.)
+      # (Server addresses deliberately not named here: they live only in sops
+      # (sing_box_vless_N_server), and comments in a public, store-readable
+      # file should not undo that. Refer to nodes by label and index.)
       outbounds = map (n: "vless-out-${toString n}") [
-        6 # Poland 3, grpc (81.15.150.144, own IP) — frozen default, muxed
-        5 # Poland 2, grpc (shares Poland 1's 81.15.150.138)
+        6 # Poland 3, grpc (own host) — frozen default, muxed
+        5 # Poland 2, grpc (shares Poland 1's host)
         2 # Germany 2, grpc (GHOSTNET)
         3 # Germany 3, grpc (GHOSTNET — historically rotten)
       ];
