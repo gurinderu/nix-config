@@ -180,7 +180,6 @@ nix-darwin.lib.darwinSystem {
         taps = {
           "homebrew/homebrew-core" = inputs.homebrew-core;
           "homebrew/homebrew-cask" = inputs.homebrew-cask;
-          "homebrew/homebrew-bundle" = inputs.homebrew-bundle;
         };
         # Fully declarative taps: $HOMEBREW_LIBRARY/Taps is a single symlink into
         # the nix store (the taps-env built from the inputs above). mutableTaps =
@@ -221,10 +220,12 @@ nix-darwin.lib.darwinSystem {
         ];
         onActivation = {
           # Taps are pinned to the nix store (read-only, root-owned) via the
-          # homebrew-{core,cask,bundle} flake inputs. autoUpdate makes brew run
+          # homebrew-{core,cask} flake inputs. autoUpdate makes brew run
           # `brew update`, which git-syncs and chmods those tap files and fails
           # with `apply2files: Permission denied`. Keep it off and update taps
-          # with `nix flake update homebrew-core homebrew-cask homebrew-bundle`.
+          # with `nix flake update homebrew-core homebrew-cask`. (No
+          # homebrew-bundle tap: `brew bundle` ships inside brew itself now and
+          # that repo is archived; nix-homebrew never needed it.)
           autoUpdate = false;
           # cleanup="zap" tried to untap homebrew/cask + homebrew/bundle, which
           # nix-homebrew manages. Homebrew 6.0 started prompting "proceed with
