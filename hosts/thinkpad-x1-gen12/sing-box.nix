@@ -197,8 +197,9 @@ in
       # Creates /var/lib/sing-box (root-owned, this unit runs as root).
       StateDirectory = "sing-box";
       # 0700, not the 0755 default: cache.db is a persistent record of every
-      # name resolved through the proxy, and arbitrary GitHub Actions
-      # workflow code runs on this box as local users (github-runner.nix).
+      # name resolved through the proxy — and this box runs arbitrary GitHub
+      # Actions workflow code. That code now lives in microVMs
+      # (github-runner.nix), but the directory stays private regardless.
       # The darwin twin of this directory is chmod 700 for the same reason.
       StateDirectoryMode = "0700";
       # Runs as root (no User=) so auto_route can install routes and open

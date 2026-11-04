@@ -11,6 +11,7 @@ nixpkgs.lib.nixosSystem {
   modules = [
     ./configuration.nix
     inputs.sops-nix.nixosModules.sops
+    inputs.microvm.nixosModules.host
     home-manager.nixosModules.home-manager
   ];
 }
