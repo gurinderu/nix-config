@@ -123,7 +123,8 @@ in
         source = "/nix/store";
         mountPoint = "/nix/.ro-store";
         # virtiofsd --readonly: a guest root that remounts the share rw still
-        # cannot write the host store.
+        # cannot write the host store. Host-side re-linking (nix-optimise)
+        # leaves guests with ESTALE, so configuration.nix keeps it off.
         readOnly = true;
       }
       {

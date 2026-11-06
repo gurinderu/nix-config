@@ -21,13 +21,18 @@
     "flakes"
   ];
   # Keep the store from growing without bound: weekly GC of generations older
-  # than two weeks (systemd timer), plus store-wide hard-link dedup.
+  # than two weeks (systemd timer), plus hard-link dedup of new store paths.
   nix.gc = {
     automatic = true;
     dates = "weekly";
     options = "--delete-older-than 14d";
   };
-  nix.optimise.automatic = true;
+  # Dedup at write time, not with the periodic nix-optimise run: that one
+  # re-links existing store files, changing their inodes under the runner
+  # microVMs that share /nix/store over virtiofs, and the guests then get
+  # ESTALE on store files until restarted (see github-runner-vm.nix).
+  nix.optimise.automatic = false;
+  nix.settings.auto-optimise-store = true;
 
   boot = {
     plymouth = {
