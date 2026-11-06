@@ -294,6 +294,21 @@ in
         }
       ))
     ];
+    # Let 0xff restart a stuck runner VM without a password, for maintenance
+    # from the cloud VM over SSH: exactly `sudo systemctl restart
+    # microvm@<name>.service`, one rule per VM declared above, no wildcards
+    # (see the sudo block in configuration.nix for why, and why the store
+    # path matches a plain `sudo systemctl`).
+    security.sudo.extraRules = [
+      {
+        users = [ "0xff" ];
+        commands = map (r: {
+          command = "${config.systemd.package}/bin/systemctl restart microvm@${runnerName r}.service";
+          options = [ "NOPASSWD" ];
+        }) runners;
+      }
+    ];
+
     systemd.timers = forEachRunner (r: lib.nameValuePair "ghr-token-${runnerName r}" (mkTokenTimer r));
 
     # Root-only parent of the per-VM secret shares. Named to sort before
