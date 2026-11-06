@@ -210,8 +210,8 @@ let
   # not existing yet.
   #
   # The second stanza covers the launchd USER agents' sinks in
-  # ~/Library/Logs (socktainer: ./socktainer.nix; herdr-notify, net-observer-
-  # bar: users/gurinderu/; codebase-memory-ui: users/common/) —
+  # ~/Library/Logs (socktainer: ./socktainer.nix; net-observer-bar:
+  # users/gurinderu/; codebase-memory-ui: users/common/) —
   # same append-fd problem, nothing else rotates them. `su gurinderu staff`
   # makes logrotate act as the owner there (it refuses to rotate in a
   # directory writable by a non-root user otherwise, and the rotations stay
@@ -230,7 +230,7 @@ let
         nomail
     }
 
-    ${userLogs}/socktainer.log ${userLogs}/socktainer-error.log ${userLogs}/herdr-notify.log ${userLogs}/net-observer-bar.log ${userLogs}/codebase-memory-ui.log {
+    ${userLogs}/socktainer.log ${userLogs}/socktainer-error.log ${userLogs}/net-observer-bar.log ${userLogs}/codebase-memory-ui.log {
         su gurinderu staff
         size 20M
         rotate 5

@@ -1,7 +1,7 @@
-# Shared activation step for the herdr plugins on cloud-vm (./herdr-notify.nix,
-# ./herdr-tab-title.nix): link the plugin directory into herdr, relinking only
-# when the registered manifest_path differs from the current manifest (see the
-# herdr-notify.nix header for why that comparison is the right trigger).
+# Activation step for the herdr plugins on cloud-vm (./herdr-tab-title.nix):
+# link the plugin directory into herdr, relinking only when the registered
+# manifest_path differs from the current manifest (see the herdr-tab-title.nix
+# header for why that comparison is the right trigger).
 # Never fails activation: every failure path just reports and continues.
 #
 # Returns a function building the home.activation entry text:
