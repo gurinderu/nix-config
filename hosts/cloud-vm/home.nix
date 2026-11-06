@@ -235,6 +235,9 @@
     }
   );
 
+  # The mac's own UI holds 9749, and `osewa forward` binds the same port there.
+  codebaseMemoryUi.port = 9750;
+
   # Non-NixOS host: puts nix-provided XDG data/terminfo/locale where distro
   # programs look for them.
   targets.genericLinux.enable = true;

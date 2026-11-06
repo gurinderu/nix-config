@@ -1,8 +1,8 @@
 # codebase-memory-mcp graph UI — one long-lived instance serving the HTTP graph
-# visualization on 127.0.0.1:9749. Shared across hosts: this single module emits
-# a launchd agent on darwin and a systemd user service on linux, so the mac, the
-# thinkpad and cloud-vm all get it from users/common/home.nix with no per-host
-# copy.
+# visualization on 127.0.0.1:9749 (codebaseMemoryUi.port; cloud-vm uses 9750).
+# Shared across hosts: this single module emits a launchd agent on darwin and a
+# systemd user service on linux, so the mac, the thinkpad and cloud-vm all get
+# it from users/common/home.nix with no per-host copy.
 #
 # The graph store is global (~/.cache/codebase-memory-mcp/<project>.db), so this
 # one server sees EVERY indexed project regardless of cwd — you switch projects
@@ -13,7 +13,7 @@
 # Process layout (0.12): `codebase-memory-mcp --ui=true` is only a stdio
 # frontend. It spawns (or joins) the per-user daemon
 # (`codebase-memory-mcp --cbm-daemon-internal`, same cgroup), and that daemon is
-# what listens on 9749. The daemon lives only while it has a client, so the
+# what listens on the port. The daemon lives only while it has a client, so the
 # frontend must stay up as that client. The frontend exits on stdin EOF, so
 # startScript points its stdin at a FIFO it holds open itself (O_RDWR, so it
 # never sees EOF) and then execs. cbm is the unit's main process, with no shell
@@ -21,14 +21,14 @@
 #
 # The frontend does NOT notice when the daemon goes away (verified: a SIGTERM to
 # the daemon logs `daemon.lifetime_end reason=stop_requested` and the frontend
-# idles on, with nothing on 9749). Supervising the frontend alone is not enough,
-# so a periodic check (a timer on linux, a StartInterval agent on darwin) probes
-# the port and restarts the service when the UI stops answering.
+# idles on, with nothing on the port). Supervising the frontend alone is not
+# enough, so a periodic check (a timer on linux, a StartInterval agent on
+# darwin) probes the port and restarts the service when the UI stops answering.
 #
 # `--ui`/`--port` are persisted into ~/.cache/codebase-memory-mcp, so any daemon
-# (one spawned by a Claude Code stdio session too) serves the UI on 9749. Claude
-# Code's own per-session servers are separate stdio clients of the same daemon
-# and store, so there is no conflict.
+# (one spawned by a Claude Code stdio session too) serves the UI on that port.
+# Claude Code's own per-session servers are separate stdio clients of the same
+# daemon and store, so there is no conflict.
 {
   pkgs,
   lib,
@@ -37,7 +37,7 @@
 }:
 let
   cbm = pkgs.callPackage ../../pkgs/codebase-memory-mcp { };
-  port = 9749;
+  inherit (config.codebaseMemoryUi) port;
   url = "http://127.0.0.1:${toString port}/";
 
   startScript = pkgs.writeShellScript "codebase-memory-ui" ''
@@ -65,9 +65,18 @@ let
 in
 # Keep the top-level structure static (`config = mkMerge [...]`) and branch the
 # platform inside mkIf — the false branch is dropped before its option (launchd
-# on linux / systemd on darwin) is ever looked up, and nothing here depends on
-# `config`, so there is no infinite recursion.
+# on linux / systemd on darwin) is ever looked up, and the conditions do not
+# depend on `config`, so there is no infinite recursion.
 {
+  # Per-host port: a host whose dev servers get forwarded to a machine that runs
+  # its own UI (cloud-vm, forwarded to the mac by `osewa forward`) needs a
+  # different one, or the forward collides with the local UI.
+  options.codebaseMemoryUi.port = lib.mkOption {
+    type = lib.types.port;
+    default = 9749;
+    description = "Local port (on 127.0.0.1) of the codebase-memory-mcp graph UI.";
+  };
+
   config = lib.mkMerge [
     (lib.mkIf pkgs.stdenv.isDarwin {
       launchd.agents.codebase-memory-ui = {
