@@ -98,6 +98,23 @@ let
   ipt = "iptables -w";
   ip6t = "ip6tables -w";
 
+  # raw PREROUTING rules that hold while the firewall is stopped (see the
+  # firewall section below). The comment makes each one exact to -C/-D.
+  stopGuard = [
+    {
+      cmd = ipt;
+      match = "-i ghr-+ -m comment --comment ghr-stopped -j DROP";
+    }
+    {
+      cmd = ipt;
+      match = "-d ${vmSubnet} -m comment --comment ghr-stopped -j DROP";
+    }
+    {
+      cmd = ip6t;
+      match = "-i ghr-+ -m comment --comment ghr-stopped -j DROP";
+    }
+  ];
+
   secretsRoot = "/run/gh-runner-secrets";
 
   # Mint a runner registration token for the VM's repo with the PAT and drop
@@ -266,6 +283,16 @@ in
           ];
         }
       ))
+      # Belt to the stop-time guard's braces: a firewall that failed to start
+      # at boot never runs its stop script, so the guard is not there either.
+      # Don't boot a VM without it; stopping the firewall stops the VMs too.
+      (forEachRunner (
+        r:
+        lib.nameValuePair "microvm@${runnerName r}" {
+          requires = [ "firewall.service" ];
+          after = [ "firewall.service" ];
+        }
+      ))
     ];
     systemd.timers = forEachRunner (r: lib.nameValuePair "ghr-token-${runnerName r}" (mkTokenTimer r));
 
@@ -315,6 +342,19 @@ in
     #
     # The firewall flushes nixos-fw itself on reload; the ghr-* chains are
     # (re)built idempotently here and torn down in extraStopCommands.
+    #
+    # Fail closed. Without the firewall (`systemctl stop firewall`, or a
+    # reload that fails: the module then runs firewall-stop) nixos-fw and all
+    # of the above are gone, ip_forward stays 1 and FORWARD's policy is ACCEPT
+    # — a VM would reach the LAN, the tailnet and sshd. So extraStopCommands
+    # leaves a guard in raw PREROUTING: drop everything from a tap, and
+    # anything routed towards the VM subnet. Raw PREROUTING runs before
+    # routing, so one rule covers INPUT and FORWARD, ahead of whatever
+    # tailscale/netavark insert into the filter table. extraCommands removes
+    # the guard last, once the ghr-* chains are back. A reload runs
+    # extraStopCommands before the start script, so the guard is also up
+    # while the rules are rebuilt. (networking.firewall.filterForward is no
+    # alternative: it is nftables-only.)
     networking.firewall.extraCommands = ''
       ${ipt} -t raw -N ghr-pre 2>/dev/null || ${ipt} -t raw -F ghr-pre
       ${ipt} -t raw -C PREROUTING -i ghr-+ -j ghr-pre 2>/dev/null \
@@ -346,8 +386,17 @@ in
 
       ${ipt} -I nixos-fw 1 -i ghr-+ -j DROP
       ${ip6t} -I nixos-fw 1 -i ghr-+ -j DROP
+
+      # Everything is in place: lift the stop-time guard (all copies).
+      ${lib.concatMapStrings (g: ''
+        while ${g.cmd} -t raw -D PREROUTING ${g.match} 2>/dev/null; do :; done
+      '') stopGuard}
     '';
     networking.firewall.extraStopCommands = ''
+      ${lib.concatMapStrings (g: ''
+        ${g.cmd} -t raw -C PREROUTING ${g.match} 2>/dev/null \
+          || ${g.cmd} -t raw -I PREROUTING 1 ${g.match}
+      '') stopGuard}
       ${ipt} -t raw -D PREROUTING -i ghr-+ -j ghr-pre 2>/dev/null || true
       ${ipt} -t raw -F ghr-pre 2>/dev/null || true
       ${ipt} -t raw -X ghr-pre 2>/dev/null || true
