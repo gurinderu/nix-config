@@ -4,10 +4,12 @@
 # carries a numeric default label or the label the hook itself set last
 # (recorded in herdr's state dir for the plugin). Logic: ./herdr-tab-title.py.
 #
-# Same linking scheme as ./herdr-notify.nix (see its header): the manifest
-# names the stable profile path of the hook, so it stays byte-identical
-# across script changes, and activation relinks only when the registered
-# manifest_path differs from the current one.
+# Linking (./herdr-plugin-link.nix): the manifest names the stable profile
+# path of the hook, so it stays byte-identical across script changes. herdr
+# copies the event commands into plugins.json when linking, and records the
+# resolved /nix/store path of the manifest symlink as manifest_path, so
+# activation relinks only when the registered manifest_path differs from the
+# current one (`herdr plugin link` works without a server).
 #
 # Events. herdr 0.9.5 does not let plugins hook pane.updated (the event a
 # terminal-title change emits; `herdr plugin list` warns "unknown event"),
