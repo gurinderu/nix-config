@@ -173,6 +173,10 @@
       "podman"
       "plugdev"
       "libvirtd"
+      # Read the system journal without sudo (`journalctl -u microvm@warp-1`),
+      # for maintenance from the cloud VM over SSH. Deliberately not a sudo
+      # rule: journalctl's pager is a shell escape, so sudo journalctl = root.
+      "systemd-journal"
     ]; # Enable ‘sudo’ for the user.
     # SSH login is key-only (PasswordAuthentication is off below), so these keys are
     # the only way in over the network. Keep at least one valid here before rebuilding.
@@ -182,6 +186,30 @@
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINYRRRC4FS1QKa6M+JCtqkFRY4jhP6NvPwTpUVh5Z9Zf iphone"
     ];
   };
+  # Passwordless maintenance for 0xff, used from the cloud VM over SSH. Only
+  # exact commands with exact arguments: sudo's `*` in arguments also matches
+  # spaces, so a wildcard would admit any extra flag. No nixos-rebuild (a
+  # deploy runs arbitrary activation scripts as root) and no journalctl (its
+  # pager is a shell escape; the systemd-journal group above covers reading).
+  # Per-VM restart rules for the runner microVMs live in github-runner.nix.
+  #
+  # The store path still matches a plain `sudo podman ...`: sudo resolves
+  # `podman` via PATH to /run/current-system/sw/bin/podman, and when the
+  # basenames agree it compares the sudoers path and the user's command by
+  # stat() device and inode, which follows the symlink into this same store
+  # path (the sudoers file and the system profile come from one generation).
+  security.sudo.extraRules = [
+    {
+      users = [ "0xff" ];
+      commands = [
+        {
+          # Reclaim the root podman store (images, build cache, volumes).
+          command = "${config.virtualisation.podman.package}/bin/podman system prune --all --volumes --force";
+          options = [ "NOPASSWD" ];
+        }
+      ];
+    }
+  ];
   programs.nix-ld.enable = true;
   programs.nix-ld.libraries = with pkgs; [
     wayland
