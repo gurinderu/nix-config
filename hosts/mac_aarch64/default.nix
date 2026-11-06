@@ -9,6 +9,15 @@
 
 nix-darwin.lib.darwinSystem {
   system = "aarch64-darwin";
+  specialArgs = {
+    # This machine's physical uplink interface. A MACHINE fact, so it lives
+    # in the host, not the user config; ./sing-box.nix (which renders the
+    # config as root) threads it into sing-box's `default_interface` so
+    # egress is pinned to Wi-Fi and never grabs the tailscale/netbird utun
+    # (the "no route to internet" wedge measured 2026-09-17). This Mac's
+    # Wi-Fi is always en0.
+    uplinkInterface = "en0";
+  };
   modules = [
     ./configuration.nix
     {
@@ -30,12 +39,6 @@ nix-darwin.lib.darwinSystem {
       home-manager.extraSpecialArgs = {
         inherit inputs pkgs-unstable sops-nix;
         inherit (inputs) nix-colors;
-        # This machine's physical uplink interface. A MACHINE fact, so it lives
-        # in the host, not the user config; users/gurinderu/sing-box.nix threads
-        # it into sing-box's `default_interface` so egress is pinned to Wi-Fi and
-        # never grabs the tailscale/netbird utun (the "no route to internet"
-        # wedge measured 2026-09-17). This Mac's Wi-Fi is always en0.
-        uplinkInterface = "en0";
       };
       home-manager.users.gurinderu =
         { pkgs, ... }:
@@ -62,7 +65,6 @@ nix-darwin.lib.darwinSystem {
     inputs.net-observer.darwinModules.default
     (
       {
-        lib,
         config,
         pkgs,
         ...
@@ -151,22 +153,14 @@ nix-darwin.lib.darwinSystem {
         environment.systemPackages = [ config.services.net-observer.package ];
 
         # net-observerd reads its sing-box facts from a compile-time constant
-        # /etc/sing-box/config.json, while this host renders the real config
-        # to ~gurinderu/.config/sing-box/config.json — with nothing at the
-        # /etc path, 2 of the 4 diagnostic signatures under live trial are
-        # silently dead: fakeip-hijack bails without the file (it needs the
-        # fakeip route interface) and endpoint-block only ever records Skip
-        # ("absence of a measurement"), so an all-quiet log would read as "no
-        # faults seen". Bridge with a symlink until the daemon grows a config
-        # knob for the path (to be raised on PR #1). The symlink's target is
-        # re-resolved on every open, so home-manager's atomic config rewrites
-        # are always followed; file permissions still apply through it (the
-        # daemon runs as root and may read the 600 user file).
-        system.activationScripts.postActivation.text = lib.mkAfter ''
-          mkdir -p /etc/sing-box
-          ln -sfn ${config.users.users.gurinderu.home}/.config/sing-box/config.json \
-            /etc/sing-box/config.json
-        '';
+        # /etc/sing-box/config.json (without it fakeip-hijack bails and
+        # endpoint-block only records Skip). That is exactly where
+        # ./sing-box.nix renders the real config, root:wheel 0600 in a 0700
+        # dir — this daemon runs as root (the module sets no UserName), so it
+        # reads it directly. Until 2026-11-06 the path was a symlink into
+        # ~gurinderu/.config/sing-box, i.e. a root daemon reading a
+        # user-writable file; the renderer replaces that symlink with the real
+        # file on its first run.
       }
     )
     inputs.nix-homebrew.darwinModules.nix-homebrew

@@ -42,8 +42,8 @@
 #
 # Secret values are left as placeholder tokens that each host substitutes at
 # activation time, so nothing sensitive ends up in the world-readable Nix store:
-#   - macOS (users/gurinderu/sing-box.nix): sed-substitutes from decrypted sops
-#     secrets into ~/.config/sing-box/config.json.
+#   - macOS (hosts/mac_aarch64/sing-box.nix, renderConfig): root sed-substitutes
+#     from decrypted sops secrets into a root-only /etc/sing-box/config.json.
 #   - NixOS (hosts/thinkpad-x1-gen12/sing-box.nix): sops.templates +
 #     builtins.replaceStrings render the config into a root-only /run/secrets file.
 #
