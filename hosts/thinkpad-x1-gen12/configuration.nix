@@ -216,7 +216,9 @@
         pkgs.sing-box
         pkgs.bash
         pkgs.mold
-        pkgs.jetbrains-toolbox
+        # Stable's 3.1.0 tarball is gone from download-cdn.jetbrains.com (404);
+        # build unstable's recipe with stable pkgs until stable catches up.
+        (pkgs.callPackage "${inputs.nixpkgs-unstable}/pkgs/by-name/je/jetbrains-toolbox/package.nix" { })
         pkgs.llvm_18
         pkgs.clang_18
         pkgs.pamixer
