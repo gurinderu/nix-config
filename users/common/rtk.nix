@@ -49,31 +49,44 @@ in
   # Idempotently merge the rtk PreToolUse/Bash hook into the user's existing
   # ~/.claude/settings.json (kept as a real, editable file). Any prior
   # `rtk hook claude` entry is dropped first, so re-running switch never
-  # duplicates it. Also ensure ~/.claude/CLAUDE.md pulls in @RTK.md.
+  # duplicates it. Also ensure ~/.claude/CLAUDE.md pulls in @RTK.md, creating
+  # ~/.claude and CLAUDE.md when missing (RTK.md lives there anyway).
+  #
+  # Dry-run safe: the jq merge only reads (into a variable), and every write
+  # sits behind the same DRY_RUN guard as hosts/cloud-vm/netbird.nix, since
+  # `run` cannot wrap a redirection. A dry run prints what it would write.
   home.activation.rtkClaudeHook = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    settings="$HOME/.claude/settings.json"
+    claudedir="$HOME/.claude"
+    settings="$claudedir/settings.json"
+    claudemd="$claudedir/CLAUDE.md"
     hook='{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}'
+
     if [ -f "$settings" ]; then
-      if ${pkgs.jq}/bin/jq --argjson h "$hook" '
+      if patched=$(${pkgs.jq}/bin/jq --argjson h "$hook" '
             .hooks.PreToolUse = (
               ((.hooks.PreToolUse // [])
                 | map(select(any(.hooks[]?; .command == "rtk hook claude") | not)))
               + [$h]
             )
-          ' "$settings" > "$settings.rtk.tmp"; then
-        run mv -f "$settings.rtk.tmp" "$settings"
+          ' "$settings"); then
+        if [ -z "''${DRY_RUN:-}" ]; then
+          printf '%s\n' "$patched" > "$settings.rtk.tmp"
+          mv -f "$settings.rtk.tmp" "$settings"
+        else
+          echo "rtk: would merge the rtk hook into $settings" >&2
+        fi
       else
-        run rm -f "$settings.rtk.tmp"
-        echo "rtk: could not patch $settings (left untouched)"
+        echo "rtk: could not patch $settings (left untouched)" >&2
       fi
     fi
 
-    claudemd="$HOME/.claude/CLAUDE.md"
-    if [ -f "$claudemd" ]; then
-      ${pkgs.gnugrep}/bin/grep -qxF '@RTK.md' "$claudemd" \
-        || run sh -c "printf '@RTK.md\n' >> \"$claudemd\""
-    else
-      run sh -c "printf '@RTK.md\n' > \"$claudemd\""
+    if ! [ -f "$claudemd" ] || ! ${pkgs.gnugrep}/bin/grep -qxF '@RTK.md' "$claudemd"; then
+      if [ -z "''${DRY_RUN:-}" ]; then
+        mkdir -p "$claudedir"
+        printf '@RTK.md\n' >> "$claudemd"
+      else
+        echo "rtk: would add @RTK.md to $claudemd" >&2
+      fi
     fi
   '';
 }
