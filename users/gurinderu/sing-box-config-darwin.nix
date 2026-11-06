@@ -1,9 +1,9 @@
 # macOS-specific sing-box config: fills the platform holes in ./sing-box-config.nix.
-# Imported by users/gurinderu/sing-box.nix (home-manager activation writer).
+# Imported by hosts/mac_aarch64/sing-box.nix (the root renderer, renderConfig).
 #
 # `uplinkInterface` is a MACHINE fact (this Mac's Wi-Fi is en0), so it is not
 # hardcoded here — it is threaded in from the host (hosts/mac_aarch64/default.nix
-# via home-manager.extraSpecialArgs) and passed to the shared config as
+# specialArgs) and passed to the shared config as
 # `defaultInterface`. See the defaultInterface doc in ./sing-box-config.nix.
 { uplinkInterface }:
 import ./sing-box-config.nix {

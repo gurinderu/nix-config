@@ -6,15 +6,23 @@
 # interface and install routes via auto_route. Agents run as the logged-in user
 # and cannot do that.
 #
-# The config is NOT rendered here. home-manager (users/gurinderu/sing-box.nix)
-# already substitutes the sops secrets into the user's
-# ~/.config/sing-box/config.json at activation time; this daemon just points at
-# that file. root reads it regardless of the user-dir permissions, and WatchPaths
-# reloads sing-box whenever home-manager rewrites it.
+# The config is rendered HERE, by root, into a root-only file (renderConfig
+# below, run from preActivation) — the same split as the thinkpad, where
+# sops-nix renders a root-only template. It used to be rendered by home-manager
+# into ~/.config/sing-box/config.json, which this root daemon then ran and a
+# root WatchPaths job reloaded on change. That made the user account a root
+# config author: any process running as gurinderu could rewrite the file and
+# have root write wherever log.output / cache_file.path / clash_api external_ui
+# point (closed 2026-11-06). A root-owned file in a root-owned directory takes
+# the user out of that path entirely.
 {
   pkgs,
   config,
   lib,
+  # This machine's physical uplink interface, from the host's specialArgs
+  # (./default.nix). sing-box's egress is pinned to it; see the
+  # defaultInterface doc in users/gurinderu/sing-box-config.nix.
+  uplinkInterface,
   ...
 }:
 let
@@ -26,15 +34,157 @@ let
   dnsPinRe = lib.replaceStrings [ "." ] [ "\\." ] dnsPin;
   dnsServices = lib.concatMapStringsSep " " lib.escapeShellArg config.networking.knownNetworkServices;
 
-  configPath = "${config.users.users.gurinderu.home}/.config/sing-box/config.json";
-  # The DIRECTORY holding config.json — what sing-box-reload watches. home-manager
-  # renders the config to a temp file and mv(1)s it over config.json (atomic
-  # rename, see users/gurinderu/sing-box.nix render_config). launchd WatchPaths on
-  # the FILE watches its vnode; an atomic rename swaps in a new inode, so launchd
-  # is left watching the orphaned old one and never fires (observed: config
-  # rewritten 14:49, daemon still the 14:39 process — stale reject rule). Watching
-  # the directory instead catches the rename, which mutates the dir's own vnode.
+  # The rendered config. /etc/sing-box (root:wheel 0700, file 0600) because it
+  # is also the path net-observerd hardcodes (./default.nix) — both root
+  # readers now open the same real file, no symlink into a user directory.
+  # NOT /var/lib/sing-box: that holds cache.db, the fakeip stamp and the
+  # logrotate state, and logrotate's rename-in-place of its state file every
+  # 15 min would fire the directory watch below.
+  configPath = "/etc/sing-box/config.json";
+  # The DIRECTORY holding config.json — what sing-box-reload watches. The
+  # renderer (renderConfig below) writes a temp file and mv(1)s it over
+  # config.json (atomic rename). launchd WatchPaths on the FILE watches its
+  # vnode; an atomic rename swaps in a new inode, so launchd is left watching
+  # the orphaned old one and never fires (observed: config rewritten 14:49,
+  # daemon still the 14:39 process — stale reject rule). Watching the
+  # directory instead catches the rename, which mutates the dir's own vnode.
   configDir = builtins.dirOf configPath;
+
+  # --- Rendering -------------------------------------------------------------
+  # Placeholder-token config from the store (no secrets in it), plus the VLESS
+  # values decrypted from secrets/shared.yaml. Single source of truth for the
+  # tokens is users/gurinderu/sing-box-secrets.nix, shared with the thinkpad.
+  secrets = import ../../users/gurinderu/sing-box-secrets.nix;
+  sopsFile = (import ../../secrets).shared;
+  singBoxTemplate = pkgs.writeTextFile {
+    name = "sing-box-config.json";
+    text = builtins.toJSON (
+      import ../../users/gurinderu/sing-box-config-darwin.nix { inherit uplinkInterface; }
+    );
+  };
+  # The age identity. There is no host key on this Mac (.sops.yaml: shared.yaml
+  # is encrypted to the gurinderu key and the thinkpad host key only), so root
+  # decrypts with the user's identity — the same file home-manager's sops-nix
+  # uses (users/gurinderu/sops.nix). That file is user-writable, and that is
+  # acceptable: the ciphertext is the immutable store copy of shared.yaml and
+  # sops verifies its MAC, so whoever controls keys.txt can make decryption
+  # FAIL but cannot choose the plaintext. What must never happen is the user
+  # supplying the plaintext — which is why decryption runs here as root and not
+  # as the user (sed pastes the values into JSON unescaped, so a
+  # user-controlled value could inject arbitrary fields).
+  ageKeyFile = config.home-manager.users.gurinderu.sops.age.keyFile;
+
+  # One substitution spec per (server, field). Each becomes a
+  # `subst <token> <secretKey> <mode>` line the render loop consumes; mode
+  # "port" strips the surrounding quotes so the port stays a JSON number, mode
+  # "str" is a plain token replacement.
+  specLines = lib.concatLists (
+    map (
+      n:
+      lib.mapAttrsToList (
+        field: stem:
+        let
+          isPort = field == "server_port";
+          token =
+            if isPort then
+              ''"server_port":"SING_BOX_PORT_${toString n}"''
+            else
+              "SING_BOX_${stem}_${toString n}";
+        in
+        "subst ${lib.escapeShellArg token} ${lib.escapeShellArg (secrets.secretName n field)} ${
+          if isPort then "port" else "str"
+        }"
+      ) secrets.fields
+    ) secrets.servers
+  );
+
+  # Render, validate and atomically install ${configPath}. Runs as root from
+  # preActivation (below), i.e. BEFORE the launchd step reloads the sing-box
+  # plist — so a switch that restarts the daemon already hands it the new
+  # config (the old home-manager renderer ran ~200 lines of activate LATER,
+  # which is what the 2026-09-03 stale-fakeip incident and the postActivation
+  # freshness check below are about). Failure exits non-zero, which aborts
+  # the switch before anything else is changed and leaves the last-good
+  # config in place.
+  #
+  # Carried over from the home-manager renderer (users/gurinderu/sing-box.nix
+  # before 2026-11-06), with the reasons:
+  #   - rename(2), not `sed > config.json`: truncate-then-stream let the
+  #     WatchPaths reload fire mid-write and hand sing-box a torn file.
+  #   - `sing-box check` + a no-leftover-SING_BOX_-token grep before install:
+  #     a substitution bug fails here instead of opaquely at reload.
+  #   - temp file OUTSIDE the watched directory (same volume, so rename stays
+  #     atomic) and no install at all when the bytes are unchanged: every
+  #     directory event used to be a sing-box kill+relaunch (launchd.log
+  #     2026-09-17: reload pairs 3-4 s apart on unchanged configs). A real
+  #     change fires the watch exactly once, an unchanged one not at all.
+  # New: the unchanged-shortcut requires config.json to be a REGULAR file
+  # (not the pre-2026-11-06 symlink into ~/.config, which cmp would follow
+  # and call "identical"), and the directory's owner/mode are reasserted on
+  # every run.
+  renderConfig = pkgs.writeShellScript "sing-box-render" ''
+    set -euo pipefail
+    umask 077
+    dir=${configDir}
+    cfg=${configPath}
+
+    key=${lib.escapeShellArg ageKeyFile}
+    # The key is the user's file: refuse anything but a regular file, so root
+    # is not talked into feeding some other root-readable file to sops.
+    if [ ! -f "$key" ] || [ -L "$key" ]; then
+      echo "sing-box: age key $key missing or not a regular file - cannot render $cfg" >&2
+      exit 1
+    fi
+    export SOPS_AGE_KEY_FILE="$key"
+
+    # Decrypt ONCE into JSON, then pull each value out with jq. Never echoed:
+    # it holds the cleartext credentials.
+    ALL_SECRETS=$(${pkgs.sops}/bin/sops -d --output-type json ${sopsFile})
+
+    SED_ARGS=()
+    subst() {
+      # $1 = token, $2 = sops key, $3 = mode (str|port)
+      local value repl
+      # Fail loudly on a missing key instead of substituting the literal "null".
+      value=$(${pkgs.jq}/bin/jq -er --arg k "$2" '.[$k]' <<<"$ALL_SECRETS") || {
+        echo "sing-box: missing secret $2 in ${sopsFile}" >&2
+        exit 1
+      }
+      # Escape sed REPLACEMENT metacharacters (& \ and the | delimiter) so the
+      # substitution is literal — the same result as the thinkpad's
+      # replaceStrings path, whatever characters a value contains.
+      repl=$(printf '%s' "$value" | ${pkgs.gnused}/bin/sed -e 's/[&\\|]/\\&/g')
+      if [ "$3" = "port" ]; then
+        SED_ARGS+=( -e "s|$1|\"server_port\":$repl|g" )
+      else
+        SED_ARGS+=( -e "s|$1|$repl|g" )
+      fi
+    }
+    ${lib.concatStringsSep "\n    " specLines}
+
+    mkdir -p "$dir"
+    chown root:wheel "$dir"
+    chmod 700 "$dir"
+
+    tmp=$(${pkgs.coreutils}/bin/mktemp /etc/.sing-box-config.XXXXXX)
+    trap 'rm -f "$tmp"' EXIT
+    ${pkgs.gnused}/bin/sed "''${SED_ARGS[@]}" ${singBoxTemplate} > "$tmp"
+    chmod 600 "$tmp"
+    if ! ${pkgs.sing-box}/bin/sing-box check -c "$tmp" 2>&1; then
+      echo "sing-box: rendered config failed validation - keeping existing $cfg" >&2
+      exit 1
+    fi
+    if ${pkgs.gnugrep}/bin/grep -q 'SING_BOX_' "$tmp"; then
+      echo "sing-box: unsubstituted SING_BOX_ placeholder in rendered config - aborting" >&2
+      exit 1
+    fi
+    if [ -f "$cfg" ] && [ ! -L "$cfg" ] && ${pkgs.diffutils}/bin/cmp -s "$tmp" "$cfg"; then
+      echo "sing-box: $cfg unchanged - not touching it (no reload)"
+      exit 0
+    fi
+    mv -f "$tmp" "$cfg"
+    echo "sing-box: installed new $cfg"
+  '';
 
   # State dir for the fakeip cache db (see cacheFilePath in
   # users/gurinderu/sing-box-config-darwin.nix) and the logrotate state file.
@@ -121,7 +271,7 @@ let
     # (the value baked into this script at build time) — those two can disagree.
     # Root-caused 2026-09-03: a switch at 18:49 rebuilt this script with the new
     # pool 172.24.0.0/14, the guard (then keyed on ${fakeipRange}) wiped cache.db
-    # and stamped 172.24.0.0/14 — but home-manager writes ~/.config/sing-box/
+    # and stamped 172.24.0.0/14 — but home-manager (the renderer then) wrote ~/.config/sing-box/
     # config.json in a SEPARATE activation step that landed ~24s later (nix-darwin
     # activation ordering; worked around above via the reload daemon watching
     # configDir, but that doesn't help the process already running). So the
@@ -132,7 +282,10 @@ let
     # no change and never wiped the mixed-pool cache.db — stale 198.19.x mappings
     # (e.g. github.com) kept being served, breaking SSH to GitHub over the tunnel.
     # Keying the stamp on config.json instead — the file the `exec` below actually
-    # loads — makes the stamp track reality instead of intent.
+    # loads — makes the stamp track reality instead of intent. (Since 2026-11-06
+    # the config is rendered by root in preActivation, before the daemon is
+    # reloaded, so that particular race is gone; the stamp still keys on the
+    # loaded file because that is the correct invariant regardless.)
     # The reader is store jq, not /usr/bin/python3: python3 there is a CLT
     # shim that dies with the CLT after a macOS update (the class documented
     # in dns-fallback.nix), and unlike that /nix-independent daemon this
@@ -154,7 +307,7 @@ let
       echo "sing-box: could not read inet4_range from ${configPath}; skipping the stale-fakeip guard this start" >&2
     else
       if [ "$want" != "${fakeipRange}" ]; then
-        echo "sing-box: config.json still carries $want, build expects ${fakeipRange}; home-manager has not re-rendered yet" >&2
+        echo "sing-box: config.json still carries $want, build expects ${fakeipRange}; the config has not been re-rendered yet" >&2
       fi
       if [ "$(/bin/cat "$stamp" 2>/dev/null)" != "$want" ]; then
         wiped=1
@@ -249,6 +402,14 @@ let
   '';
 in
 {
+  # Render before anything else in activate (see renderConfig). `|| exit 1`
+  # spelled out rather than leaning on activate's `set -e`, so a failed
+  # render visibly aborts the switch with the last-good config in place.
+  system.activationScripts.preActivation.text = lib.mkBefore ''
+    echo "rendering sing-box config..." >&2
+    ${renderConfig} || exit 1
+  '';
+
   launchd.daemons.sing-box.serviceConfig = {
     # The program lives in /nix/store, which is a SEPARATE APFS volume mounted at
     # boot by org.nixos.darwin-store. launchd has no ordering between daemons, so a
@@ -279,8 +440,8 @@ in
     # plain-priority side.
     ProcessType = "Interactive";
     Nice = -10;
-    # Don't hammer launchd if it crash-loops (e.g. config not yet rendered on the
-    # very first switch — home-manager activation runs after system activation).
+    # Don't hammer launchd if it crash-loops (e.g. a config that is missing or
+    # broken on disk).
     ThrottleInterval = 5;
     # NB: config reloads are handled by the sing-box-reload daemon below, NOT by
     # a WatchPaths here. launchd's WatchPaths only *starts a stopped* job when a
@@ -292,13 +453,13 @@ in
     StandardErrorPath = logPath;
   };
 
-  # Restart sing-box whenever home-manager re-renders config.json. This is a
+  # Restart sing-box whenever renderConfig installs a new config.json. This is a
   # one-shot daemon: launchd keeps it stopped and (re)starts it on every change
   # to a WatchPaths entry — precisely the behaviour the main daemon's own
   # WatchPaths could NOT provide (launchd won't restart a running job). On each
   # fire it kickstarts (-k = kill + relaunch) the main daemon so it reads the new
   # config. Robust against activation ordering: it reacts to the final state of
-  # config.json after home-manager has written it, not to rebuild timing. The
+  # config.json after the renderer has written it, not to rebuild timing. The
   # main daemon's lsof guard on cache.db absorbs the brief old/new overlap.
   # /bin/launchctl is on the always-mounted system volume, so no wait4path/nix
   # dependency is needed.
@@ -309,8 +470,8 @@ in
   # orphaned old one and never fires — the daemon then served a stale config until
   # a manual kickstart (observed 2026-07-15: reject rule rendered but not loaded).
   # The rename mutates the containing directory's vnode, which the directory watch
-  # catches reliably. The renderer (users/gurinderu/sing-box.nix render_config)
-  # keeps its temp file OUTSIDE this directory and does not install a
+  # catches reliably. The renderer (renderConfig above) keeps its temp file
+  # OUTSIDE this directory and does not install a
   # byte-identical config at all (2026-09-18), so a real change fires the watch
   # exactly once and an unchanged one not at all; the content gate below is the
   # second layer for any other writer or a post-boot fire.
@@ -464,17 +625,17 @@ in
 
   # Catch the switch that leaves sing-box running on a STALE config.
   #
-  # Ordering, confirmed against the generated /run/current-system/activate:
-  # system launchd daemons (this file's org.nixos.sing-box) are (re)loaded
-  # around line ~2500, well before "Activating home-manager configuration"
-  # at ~2684 — home-manager is what renders ~/.config/sing-box/config.json
-  # (users/gurinderu/sing-box.nix). So on every switch sing-box is booted out
-  # and relaunched against whatever config.json already happened to be on
-  # disk, and the NEW config lands only after that, once home-manager runs.
-  # sing-box-reload above is meant to catch the resulting mismatch (it
-  # WatchPaths the config dir and kickstarts on the write home-manager just
-  # did), but it depends on that job actually being loaded into launchd —
-  # observed missing at least once (2026-09-03, likely macOS Background Task
+  # History: until 2026-11-06 home-manager rendered the config, and it runs
+  # in postActivation — well AFTER the launchd step that reloads
+  # org.nixos.sing-box (confirmed against the generated activate: daemons at
+  # ~2500, "Activating home-manager configuration" at ~2684). So every switch
+  # relaunched sing-box against the OLD config and the new one landed later.
+  # renderConfig now runs in preActivation, before the launchd step, so the
+  # ordering hole is closed at the source. This check stays as the
+  # independent second path for what remains: a config change that does not
+  # touch the plist (a secret rotation, a route tweak) depends on
+  # sing-box-reload's WatchPaths, and that job has been observed missing from
+  # launchd at least once (2026-09-03, likely macOS Background Task
   # Management silently dropping it), with no other mechanism to notice. A
   # WatchPaths job is therefore not sufficient on its own as the only path to
   # a fresh config; this is a second, ordering-based check that doesn't
@@ -487,7 +648,7 @@ in
   # on disk now — kickstart it, then record the hash the same way
   # sing-box-reload does. Sharing that daemon's state, rather than comparing
   # config.json's mtime with a start stamp, is what keeps a switch to ONE
-  # restart: home-manager's mv also fires sing-box-reload, and with the old
+  # restart: the renderer's mv also fires sing-box-reload, and with the old
   # mtime check whichever of the two ran second still saw "config newer than
   # start" (the reload kick's new process can sit up to ~30s in the cache.db
   # lsof wait before stamping) and kicked again. Now whichever runs second
@@ -497,10 +658,9 @@ in
   #
   # If sing-box has not run since boot (no ${stateDir}/started), do nothing —
   # RunAtLoad/KeepAlive will bring it up already reading the config
-  # home-manager just wrote, and a `launchctl kickstart` of a stopped job here
-  # would just race that. Runs in postActivation, i.e. strictly after the
-  # "Activating home-manager" block above has finished, per the ordering this
-  # comment opens with. Never fails activation: this is a best-effort
+  # preActivation just rendered, and a `launchctl kickstart` of a stopped job
+  # here would just race that. Runs in postActivation, i.e. strictly after
+  # the render and the launchd reload. Never fails activation: this is a best-effort
   # freshness nudge, not a required step.
   system.activationScripts.postActivation.text = lib.mkAfter ''
     echo "checking sing-box config freshness..." >&2

@@ -1,148 +1,25 @@
+# The sing-box config is no longer rendered here. Until 2026-11-06 this
+# home-manager activation decrypted the VLESS secrets and wrote
+# ~/.config/sing-box/config.json, which the ROOT launchd daemon then ran and a
+# root WatchPaths job reloaded on change — so any process running as this user
+# could rewrite a root daemon's config and make root write wherever log.output,
+# cache_file.path or clash_api's external_ui pointed. Rendering now happens as
+# root into /etc/sing-box/config.json (hosts/mac_aarch64/sing-box.nix,
+# renderConfig).
+#
+# What is left is removing the old rendered file: it still holds the
+# decrypted credentials in cleartext and nothing reads it any more. Done here,
+# as the user, on purpose — root deleting paths inside a user-controlled
+# directory is the same trust inversion this move removes (a symlinked
+# ~/.config/sing-box would aim the delete anywhere). Idempotent; drop this
+# module once every machine has switched past it.
+{ config, lib, ... }:
 {
-  pkgs,
-  lib,
-  config,
-  # This machine's uplink interface, threaded from the host
-  # (hosts/mac_aarch64/default.nix → home-manager.extraSpecialArgs). sing-box's
-  # egress is pinned to it; see the defaultInterface doc in sing-box-config.nix.
-  uplinkInterface,
-  ...
-}:
-let
-  secrets = import ./sing-box-secrets.nix;
-  # The VLESS credentials live in the file shared with the thinkpad, not in
-  # this host's defaultSopsFile (mac.yaml, see ./sops.nix).
-  sopsFile = (import ../../secrets).shared;
-
-  singBoxConfig = pkgs.writeTextFile {
-    name = "sing-box-config.json";
-    text = builtins.toJSON (import ./sing-box-config-darwin.nix { inherit uplinkInterface; });
-  };
-
-  # One substitution spec per (server, field), generated from the shared
-  # single-source-of-truth so this path can never drift from the NixOS one.
-  # Each becomes a `subst <token> <secretKey> <mode>` line the activation loop
-  # consumes; mode "port" strips the surrounding quotes so the port stays a JSON
-  # number, mode "str" is a plain token replacement.
-  specLines = lib.concatLists (
-    map (
-      n:
-      lib.mapAttrsToList (
-        field: stem:
-        let
-          isPort = field == "server_port";
-          token =
-            if isPort then
-              ''"server_port":"SING_BOX_PORT_${toString n}"''
-            else
-              "SING_BOX_${stem}_${toString n}";
-        in
-        "subst ${lib.escapeShellArg token} ${lib.escapeShellArg (secrets.secretName n field)} ${
-          if isPort then "port" else "str"
-        }"
-      ) secrets.fields
-    ) secrets.servers
-  );
-in
-{
-  home.activation.singBoxConfig = config.lib.dag.entryAfter [ "writeBoundary" "sops-nix" ] ''
-    # The rendered config holds the decrypted VLESS secrets in cleartext, so
-    # everything created here must be private. umask 077 closes the window
-    # between `> config.json` and the chmod below where the file would otherwise
-    # be created world-readable (default umask 022).
-    umask 077
-    CONFIG_DIR="${config.home.homeDirectory}/.config/sing-box"
-    export SOPS_AGE_KEY_FILE="${config.sops.age.keyFile}"
-
-    $DRY_RUN_CMD mkdir -p "$CONFIG_DIR"
-    # The launchd daemon reads this as root regardless of the user-dir perms.
-    $DRY_RUN_CMD chmod 700 "$CONFIG_DIR"
-
-    # Decrypt the whole secrets file ONCE into JSON (one sops invocation instead
-    # of one per field), then pull each value out with jq.
-    ALL_SECRETS=$(${pkgs.sops}/bin/sops -d --output-type json "${sopsFile}")
-
-    # Build the sed substitutions for every backend server. Tokens carry the
-    # index suffix so order does not matter.
-    SED_ARGS=()
-    subst() {
-      # $1 = token, $2 = sops key, $3 = mode (str|port)
-      local value
-      # Fail loudly on a missing key instead of substituting the literal "null"
-      # jq -r would otherwise emit (which sing-box only rejects later, opaquely).
-      value=$(${pkgs.jq}/bin/jq -er --arg k "$2" '.[$k]' <<<"$ALL_SECRETS") || {
-        echo "sing-box: missing secret $2 in ${sopsFile}" >&2
-        exit 1
-      }
-      # Escape sed REPLACEMENT metacharacters (& \ and the | delimiter) so the
-      # substitution is literal — matching the Linux replaceStrings path exactly,
-      # regardless of what characters a secret value contains.
-      local repl
-      repl=$(printf '%s' "$value" | ${pkgs.gnused}/bin/sed -e 's/[&\\|]/\\&/g')
-      if [ "$3" = "port" ]; then
-        SED_ARGS+=( -e "s|$1|\"server_port\":$repl|g" )
-      else
-        SED_ARGS+=( -e "s|$1|$repl|g" )
-      fi
-    }
-    ${lib.concatStringsSep "\n    " specLines}
-
-    # Render atomically: substitute into a private temp file, validate it, then
-    # rename over the live config in one step. Three bugs this closes:
-    #   1. A dry run must NOT touch the live file. `$DRY_RUN_CMD sed ... > file`
-    #      does not protect the redirect — the shell opens (truncates) the target
-    #      before DRY_RUN_CMD (echo) runs, so a dry run used to blow away
-    #      config.json and fill it with the echoed command line, which embeds the
-    #      DECRYPTED secrets. Guard the whole write on DRY_RUN_CMD instead.
-    #   2. `sed > config.json` is truncate-then-stream: the launchd WatchPaths
-    #      reload (hosts/mac_aarch64/sing-box.nix) can fire mid-write and hand
-    #      sing-box a half-written file. rename(2) is atomic — readers see either
-    #      the whole old file or the whole new one.
-    #   3. No validation: a substitution bug (or a leftover SING_BOX_ placeholder)
-    #      shipped straight to the daemon, which only rejected it opaquely at
-    #      reload. `sing-box check` fails the activation and leaves the last-good
-    #      config in place instead.
-    #
-    # And a fourth, closed 2026-09-18: the temp file used to be created INSIDE
-    # $CONFIG_DIR, and the install was unconditional. hosts/mac_aarch64/sing-box.nix
-    # restarts sing-box via a launchd WatchPaths on that DIRECTORY, so every
-    # activation produced two directory events (mktemp create, then the rename)
-    # and two kill+relaunch cycles of the daemon — each a full TUN teardown with
-    # minutes of "no route" for the user — even when the rendered bytes were
-    # identical to the file already in place (launchd.log 2026-09-17: reload
-    # pairs 3-4 s apart at 21:29, 21:32, 21:54, 22:39, 22:40, every one on an
-    # unchanged config). Hence: mktemp in the PARENT directory (same volume, so
-    # rename(2) stays atomic; the parent is not watched), and cmp(1) against the
-    # live file first — identical content leaves the directory untouched and
-    # sing-box running. A real change now fires the watch exactly once.
-    render_config() {
-      local tmp
-      tmp=$(${pkgs.coreutils}/bin/mktemp "$CONFIG_DIR/../.sing-box-config.XXXXXX")
-      ${pkgs.gnused}/bin/sed "''${SED_ARGS[@]}" ${singBoxConfig} > "$tmp"
-      chmod 600 "$tmp"
-      if ! ${pkgs.sing-box}/bin/sing-box check -c "$tmp" 2>&1; then
-        echo "sing-box: rendered config failed validation - keeping existing config.json" >&2
-        rm -f "$tmp"
-        exit 1
-      fi
-      # Belt-and-suspenders: no placeholder token may survive into production.
-      if ${pkgs.gnugrep}/bin/grep -q 'SING_BOX_' "$tmp"; then
-        echo "sing-box: unsubstituted SING_BOX_ placeholder in rendered config - aborting" >&2
-        rm -f "$tmp"
-        exit 1
-      fi
-      if [ -f "$CONFIG_DIR/config.json" ] && ${pkgs.diffutils}/bin/cmp -s "$tmp" "$CONFIG_DIR/config.json"; then
-        rm -f "$tmp"
-        echo "sing-box: config.json unchanged - not touching it (no reload)"
-        return 0
-      fi
-      mv -f "$tmp" "$CONFIG_DIR/config.json"
-    }
-
-    if [ -n "''${DRY_RUN_CMD:-}" ]; then
-      echo "would render, validate and atomically install $CONFIG_DIR/config.json"
-    else
-      render_config
+  home.activation.singBoxLegacyConfigCleanup = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    legacy="${config.home.homeDirectory}/.config/sing-box"
+    if [ -e "$legacy/config.json" ] || [ -L "$legacy/config.json" ]; then
+      $DRY_RUN_CMD rm -f "$legacy/config.json"
+      $DRY_RUN_CMD rmdir "$legacy" 2>/dev/null || true
     fi
   '';
 }

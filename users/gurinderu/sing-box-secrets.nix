@@ -1,7 +1,7 @@
 # Single source of truth for the per-server VLESS secret fields and their
 # placeholder tokens. Shared by BOTH substitution paths so they can never drift:
-#   - macOS  (users/gurinderu/sing-box.nix): sed over decrypted sops values at
-#     home-manager activation time.
+#   - macOS  (hosts/mac_aarch64/sing-box.nix): sed over decrypted sops values,
+#     run as root at system activation (preActivation).
 #   - NixOS  (hosts/thinkpad-x1-gen12/sing-box.nix): sops.templates +
 #     builtins.replaceStrings rendering placeholders into a root-only file.
 #
