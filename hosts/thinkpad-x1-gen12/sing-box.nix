@@ -59,6 +59,13 @@ let
   # loudly on the same file right after.
   cacheDb = "/var/lib/sing-box/cache.db";
   renderedConfig = config.sops.templates."sing-box-config.json".path;
+  # sha256 of the rendered config the running sing-box loaded — the thinkpad
+  # twin of the darwin reloadHash md5 gate. Written by preStart right before
+  # every start (so it tracks what the process ACTUALLY loads, not what the
+  # reload saw); read by sing-box-config-reload below. Lives in the 0700
+  # StateDirectory: the hash is of a file holding credentials.
+  configHash = "/var/lib/sing-box/config.sha256";
+  sha256 = "${pkgs.coreutils}/bin/sha256sum";
   preStart = pkgs.writeShellScript "sing-box-pre-start" ''
     i=0
     while [ -f ${cacheDb} ] && [ "$i" -lt 30 ] \
@@ -92,6 +99,16 @@ let
         echo "sing-box: could not remove stale cache.db; NOT stamping $want so the guard retries next start" >&2
       fi
     fi
+    # Stamp the config this start loads for the reload gate. An unreadable
+    # config drops the stamp, so the next path trigger restarts once more
+    # rather than trusting a hash of nothing.
+    if h=$(${sha256} 2>/dev/null < ${lib.escapeShellArg renderedConfig}); then
+      (umask 077; printf '%s' "''${h%% *}" > ${configHash}) \
+        || echo "sing-box: could not write ${configHash}; the next config trigger will restart once more" >&2
+    else
+      rm -f ${configHash}
+    fi
+
     # The guard is hygiene, never a start blocker: this script is the unit's
     # ExecStartPre (no "-" prefix), so a non-zero tail here would crash-loop
     # sing-box on Restart=on-failure — e.g. a failed stamp write on a full
@@ -135,12 +152,15 @@ in
   # TUN device for the inbound.
   boot.kernelModules = [ "tun" ];
 
-  # Restart sing-box when sops re-renders the config (i.e. after a credential
-  # rotation in secrets/shared.yaml + nixos-rebuild switch). restartTriggers on the
-  # service only catches structural Nix changes; this path unit catches
-  # secret-value changes that only affect the rendered file on disk.
+  # Restart sing-box when sops re-renders the config with a different VALUE
+  # (i.e. after a credential rotation in secrets/shared.yaml + nixos-rebuild
+  # switch). restartTriggers on the service only catches structural Nix
+  # changes; this path unit catches secret-value changes that only affect the
+  # rendered file on disk.
   # Using a path unit instead of sops restartUnits avoids the activation-script
-  # restart mechanism deprecated in NixOS 26.11.
+  # restart mechanism (/run/nixos/activation-restart-list, which is what
+  # sops-nix's restartUnits writes): deprecated in NixOS 26.05 —
+  # switch-to-configuration already prints a WARN for it — and removed in 26.11.
   systemd.paths.sing-box-config = {
     wantedBy = [ "multi-user.target" ];
     pathConfig = {
@@ -149,11 +169,48 @@ in
     };
   };
 
+  # sops-nix renders into a fresh /run/secrets.d/N generation on EVERY
+  # activation, so the path unit fires on every switch whether or not anything
+  # changed. The old unconditional `systemctl restart` therefore bounced the
+  # proxy (and the runner VMs' network) on each switch, and on 2026-11-06 it
+  # ran while switch-to-configuration was re-executing systemd: "Failed to
+  # restart sing-box.service: Transport endpoint is not connected", unit
+  # failed. Hence, in order:
+  # - content gate: restart only when the rendered file's sha256 differs from
+  #   the one preStart stamped for the running process (darwin's md5 gate);
+  # - try-restart: a stopped sing-box (switch-to-configuration stops it for a
+  #   structural change and starts it again itself) is left alone — that start
+  #   loads the new file anyway — and an inactive unit is not a failure;
+  # - --no-block: only enqueue the job, never wait on it inside activation;
+  # - retry: the bus drops for a moment during a daemon-reexec; a failure
+  #   that outlasts ~30s is real and fails the unit.
+  # The stamp is NOT written here: preStart writes it on the actual restart.
   systemd.services.sing-box-config-reload = {
-    description = "Reload sing-box after rendered config change";
+    description = "Restart sing-box if the rendered config content changed";
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${pkgs.systemd}/bin/systemctl restart sing-box.service";
+      ExecStart = pkgs.writeShellScript "sing-box-config-reload" ''
+        if ! new=$(${sha256} 2>/dev/null < ${lib.escapeShellArg renderedConfig}); then
+          echo "sing-box: rendered config unreadable; not restarting" >&2
+          exit 0
+        fi
+        new=''${new%% *}
+        old=$(cat ${configHash} 2>/dev/null || :)
+        if [ "$new" = "$old" ]; then
+          echo "sing-box: rendered config unchanged; no restart"
+          exit 0
+        fi
+        i=0
+        until ${config.systemd.package}/bin/systemctl --no-block try-restart sing-box.service; do
+          i=$((i + 1))
+          if [ "$i" -ge 30 ]; then
+            echo "sing-box: try-restart kept failing; giving up" >&2
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "sing-box: rendered config changed; try-restart queued"
+      '';
     };
   };
 
