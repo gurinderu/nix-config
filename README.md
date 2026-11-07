@@ -29,6 +29,19 @@ NixOS (thinkpad):
 sudo nixos-rebuild switch --flake .#thinkpad-x1-gen12
 ```
 
+Don't run `switch` over an SSH session that rides the thinkpad's own network
+(tailscale through sing-box). When the switch stops NetworkManager or
+sing-box, the ssh client times out, nixos-rebuild's piped output breaks,
+switch-to-configuration exits 101 halfway, and the units it stopped are never
+started again (2026-11-06). Over such a session, either stage the generation
+and reboot:
+
+```
+sudo nixos-rebuild boot --flake .#thinkpad-x1-gen12 && sudo reboot
+```
+
+or run the `switch` inside tmux/zellij on the host, so it survives the drop.
+
 Cloud VM (non-NixOS, standalone home-manager):
 
 ```
