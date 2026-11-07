@@ -1,0 +1,22 @@
+# Copied into infinity's workspace as crates/infinity-provider-openai-compat
+# by ../default.nix, hence the sibling path dependencies.
+[package]
+name = "infinity-provider-openai-compat"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Infinity model provider for any OpenAI-compatible /v1/chat/completions endpoint (llama.cpp, vLLM, Ollama...)"
+
+[dependencies]
+infinity-provider-protocol = { path = "../infinity-provider-protocol", features = ["remote"] }
+infinity-provider-rig = { path = "../infinity-provider-rig" }
+rig-core = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+reqwest = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+async-stream = "0.3"
+
+[[bin]]
+name = "infinity-provider-openai-compat"
+path = "src/main.rs"

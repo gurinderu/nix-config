@@ -14,6 +14,7 @@
     ./hardware-configuration.nix
     ./sing-box.nix
     ./github-runner.nix
+    ./local-agents.nix
   ];
 
   nix.settings.experimental-features = [

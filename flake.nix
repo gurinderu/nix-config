@@ -156,6 +156,14 @@
           { };
       packages.x86_64-linux.moshi-hook = (mkPkgsUnfree "x86_64-linux").callPackage ./pkgs/moshi-hook { };
 
+      # infinity (hydro-project coding agents) built from a pinned commit,
+      # plus our OpenAI-compatible model provider; the thinkpad runs it against
+      # a local llama.cpp model (hosts/thinkpad-x1-gen12/local-agents.nix).
+      # Exposed so `nix build .#infinity` works.
+      packages.x86_64-linux.infinity =
+        nixpkgs.legacyPackages.x86_64-linux.callPackage ./pkgs/infinity
+          { };
+
       # The CVE snapshot net-observer's neighbour scanner reads on the Mac
       # (see pkgs/cve-snapshot). Exposed on both systems so the unpack recipe
       # is buildable/testable off-Mac (`nix build .#cve-snapshot`); the darwin
