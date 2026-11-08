@@ -39,7 +39,11 @@ let
     hash = "sha256-KnxRifWCxD2M3//c6caKJhSkJHsELHgUteoNvZc83OQ=";
   };
 
+  # Per agent: what infinity is told, so compaction keeps each agent within
+  # it. llama-server gets one slot per concurrent agent (parent plus
+  # spawn_thread children) and room for all of them at full size.
   contextSize = 16384;
+  slots = 3;
 
   # The provider is configured by env; `env` keeps it a plain argv in
   # providers.json, so a daemon the CLI starts by itself gets it too.
@@ -77,12 +81,22 @@ in
       # Qwen3's chat template, which carries tool calling.
       "--jinja"
       "--ctx-size"
-      (toString contextSize)
+      (toString (slots * contextSize))
       "--n-gpu-layers"
       "99"
-      # One agent at a time; parallel slots would split the context.
+      # Concurrent agents share one KV pool, so a busy slot can use idle
+      # slots' space instead of each getting a fixed third.
       "--parallel"
-      "1"
+      (toString slots)
+      "--kv-unified"
+      # q8_0 KV (~78 KB/token for Qwen3-8B, ~3.8 GB at 48k) needs flash
+      # attention; f16 would take ~7 GB of the iGPU's shared RAM.
+      "--flash-attn"
+      "on"
+      "--cache-type-k"
+      "q8_0"
+      "--cache-type-v"
+      "q8_0"
       # The P-cores; with every layer offloaded the CPU mostly waits anyway.
       "--threads"
       "6"
