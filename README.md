@@ -204,6 +204,62 @@ which this change leaves on disk. Once the VMs have run for a while, those
 can go, along with the old runner users' files:
 `sudo rm -rf /var/cache/github-runner-* /var/lib/github-runner /var/log/github-runner`.
 
+# Local agents (thinkpad)
+
+`hosts/thinkpad-x1-gen12/local-agents.nix` runs infinity coding agents
+against a local model (abliterated Qwen3.6-35B-A3B in llama.cpp on the Arc
+iGPU). The daemon is `infinity-daemon.service`, running as the `agent` system
+user with home `/var/lib/agent`; 0xff drives it through three commands:
+
+```
+agent-import ~/src/foo        # copy the repo's branches and tags in, as workspace "foo"
+agents foo                    # infinity TUI in /var/lib/agent/work/foo
+agents foo -H "task"          # headless
+cd ~/src/foo && agent-fetch foo
+git log -p HEAD..agent-foo/<branch>   # review, then merge/cherry-pick what you want
+```
+
+`agent-import` takes only committed state (a `git bundle` of branches and
+tags): no working-tree changes, no `.git/config`, hooks or shared objects.
+`agent-fetch` brings the agent's branches back the same way, as
+`agent-<name>/*` remote-tracking refs, with object fsck on; your git never
+opens the agent's repository, so nothing the agent writes into its
+`.git/config` or hooks runs as you. Never `cd` into
+`/var/lib/agent/work/<name>` and run git or a build there as yourself.
+`agents` runs the CLI as the agent user through sudo (NOPASSWD for exactly
+these commands, on a fresh pty), because the CLI only finds the daemon in
+`$HOME/.infinity`; it refuses to start when the service is down (the CLI
+would start an unconfined daemon of its own). Removing a workspace:
+`sudo rm -rf /var/lib/agent/work/<name>`.
+
+Checks:
+
+```
+systemctl status infinity-daemon llama-cpp
+journalctl -u infinity-daemon -u llama-cpp -f
+sudo cat /var/lib/agent/.infinity/daemon.log
+sudo iptables -S agent-out; sudo iptables -S agent-reply; sudo ip6tables -S agent-out
+systemd-analyze security infinity-daemon
+```
+
+What the sandbox does: the agent user owns nothing of 0xff's, and the unit
+hides `/home`, `/root`, `/run/user`, devices, other users' processes, and the
+tailscale/podman/libvirt/D-Bus/nix-daemon sockets and the secrets under
+`/run`. Its network (iptables owner rules, `agent-out`/`agent-reply`): the
+internet through sing-box, DNS, llama-server on 127.0.0.1:18101, and its own
+local listeners (the daemon talks to its tool servers over loopback); not
+other users' ports on this laptop, not the tailnet, the runner VMs or host
+podman/libvirt networks. The LAN is open by default;
+`thinkpad.localAgents.allowLan = false` closes it. With the firewall stopped,
+the agent user sends nothing.
+
+What it does not: the agent has the internet, so anything you import can
+leave the machine (keep secrets out of imported repos). The kernel is shared
+(a kernel bug is an escape; the runner microVMs are the stronger boundary).
+Whatever it writes is untrusted code: read it before you build or run it,
+especially `.envrc`, build scripts and CI files. It can read world-readable
+files (`/nix/store`, `/etc`) and use CPU, RAM and disk without a cap.
+
 # netbird on cloud-vm
 
 `hosts/cloud-vm/netbird.nix` puts `netbird` on PATH and writes a systemd

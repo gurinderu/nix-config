@@ -195,8 +195,9 @@ in
   options.thinkpad.githubRunnerVms = {
     # Conservative per-VM defaults for a laptop that is also a desktop. The X1
     # Carbon Gen 12 has a 12- to 16-core Core Ultra 7 and (judging by the 7.8G
-    # /run tmpfs, 25% of RAM) 32 GB: two VMs at 4 vCPU / 8 GiB leave the host
-    # half its RAM and most of its cores. Raise per box if jobs OOM.
+    # /run tmpfs, 25% of RAM) 32 GB: two VMs at 4 vCPU / 6 GiB leave the host
+    # ~19 GB, most of it for the local agents' ~17 GB model (local-agents.nix),
+    # and most of its cores. Raise per box if jobs OOM.
     vcpu = lib.mkOption {
       type = lib.types.ints.positive;
       default = 4;
@@ -204,7 +205,7 @@ in
     };
     memMiB = lib.mkOption {
       type = lib.types.ints.positive;
-      default = 8192;
+      default = 6144;
       description = ''
         RAM per GitHub runner microVM, in MiB. With virtiofs the guest memory
         is shared, so the host cannot reclaim it while the VM runs; the guest's
