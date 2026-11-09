@@ -62,8 +62,8 @@ sudo chsh -s "$Z" "$USER"
 ```
 
 Make sshd drop dead connections within ~30 s. Otherwise a dropped ssh session
-lingers for hours with its zellij client still attached, and reattaching to
-`main` from a new login hangs behind it:
+lingers for hours with its herdr client still attached, and reattaching to
+the herdr session from a new login hangs behind it:
 
 ```
 printf 'ClientAliveInterval 10\nClientAliveCountMax 3\n' | sudo tee /etc/ssh/sshd_config.d/10-keepalive.conf
@@ -414,7 +414,7 @@ entries win) or give `new` an absolute path. Plain `attach` / `new` run the
 passwd shell by its absolute path as `zsh -l`, which sets the usual PATH.
 
 osewa sessions have no `SSH_CONNECTION` and no `mosh-server` parent, so
-neither the zellij auto-attach nor the mosh-to-herdr hook runs in them.
+neither the ssh nor the mosh herdr auto-attach runs in them.
 
 On the VM: `systemctl --user status osewa`, `journalctl --user -u osewa`,
 `ss -lunpt | grep 7322`. A switch that changes the unit restarts the server.

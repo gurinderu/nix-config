@@ -1,6 +1,6 @@
 # Home environment for the cloud VM. Common dev tools + zsh/git/neovim/starship/
-# direnv/zellij come from ../../users/common/home.nix. Only VM-specific bits
-# live here.
+# direnv come from ../../users/common/home.nix. Only VM-specific bits live
+# here.
 {
   inputs,
   lib,
@@ -58,16 +58,20 @@
     homeDirectory = "/home/ubuntu";
   };
 
-  # Interactive ssh logins land in a persistent zellij session: a dropped
-  # connection reattaches to the same panes on the next login, and leaving
-  # zellij (detach or exit) closes the ssh shell too. Skipped inside zellij
-  # and herdr (whose panes inherit SSH_CONNECTION from the login that started
-  # its server), for `ssh host cmd` (not interactive, so .zshrc never runs)
-  # and on dumb terminals. If zellij itself fails, the plain shell stays as a
-  # fallback.
+  # herdr is the only multiplexer here: zellij (enabled for every host in
+  # users/common/home.nix) stays off.
+  programs.zellij.enable = lib.mkForce false;
+
+  # Interactive ssh logins land in herdr's default session (`herdr` alone
+  # attaches to it or starts it), with the full UI: a dropped connection
+  # reattaches to the same panes on the next login, and leaving herdr (detach
+  # or exit) closes the ssh shell too. Skipped inside herdr (whose panes
+  # inherit SSH_CONNECTION from the login that started its server), for
+  # `ssh host cmd` (not interactive, so .zshrc never runs) and on dumb
+  # terminals. If herdr itself fails, the plain shell stays as a fallback.
   programs.zsh.initContent = ''
-    if [[ -n $SSH_CONNECTION && -z $ZELLIJ && -z $HERDR_ENV && $TERM != dumb ]]; then
-      zellij attach --create main && exit
+    if [[ -n $SSH_CONNECTION && -z $HERDR_ENV && $TERM != dumb ]]; then
+      herdr && exit
     fi
   '';
 
