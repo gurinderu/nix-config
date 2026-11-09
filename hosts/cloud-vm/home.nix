@@ -19,6 +19,9 @@
     # Fluence mesh root CA decrypted by sops; system-manager's root units
     # (./system/mesh-ca.nix) put it into the system trust store.
     ./mesh-ca.nix
+    # Rootless podman for ubuntu, Docker-compatible (`docker`, `docker
+    # compose`, DOCKER_HOST).
+    ./podman.nix
     # osewa server (persistent terminals, next to mosh); enrollment, linger
     # and the firewall come from the bootstrap (see module).
     ./osewa.nix
