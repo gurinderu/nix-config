@@ -16,8 +16,9 @@
       };
       # The cloud VMs by their full MagicDNS name: bare `cloud-vm-N` hits the
       # same fakeip dead end, while `*.ts.net` goes to MagicDNS through
-      # sing-box (the ts.net rule in sing-box-config.nix).
-      "cloud-vm-*" = {
+      # sing-box (the ts.net rule in sing-box-config.nix). The negation keeps
+      # an already-full name from getting the suffix twice.
+      "cloud-vm-* !*.ts.net" = {
         HostName = "%h.tail411887.ts.net";
         User = "ubuntu";
       };
