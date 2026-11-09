@@ -14,6 +14,13 @@
         HostName = "100.77.143.123";
         User = "0xff";
       };
+      # The cloud VMs by their full MagicDNS name: bare `cloud-vm-N` hits the
+      # same fakeip dead end, while `*.ts.net` goes to MagicDNS through
+      # sing-box (the ts.net rule in sing-box-config.nix).
+      "cloud-vm-*" = {
+        HostName = "%h.tail411887.ts.net";
+        User = "ubuntu";
+      };
       "*" = {
         IdentityFile = [
           config.sops.secrets.ssh_ed25519.path
