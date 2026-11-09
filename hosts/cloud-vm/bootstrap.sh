@@ -1,41 +1,37 @@
-#!/usr/bin/env bash
-# Set up a fresh Ubuntu VM (user with passwordless sudo) as the `cloud-vm`
-# home-manager host. Idempotent: every step checks before it acts, so re-running
-# is safe. Usage:
-#
-#   curl -fsSL https://raw.githubusercontent.com/gurinderu/nix-config/main/hosts/cloud-vm/bootstrap.sh | bash -s -- <tailscale-hostname>
-#
-# Without a hostname, tailscale keeps the machine's own name. See README
-# "Rebuild" -> "Cloud VM" for the why behind each step.
-#
-# Everything runs inside main(): bash reads the whole function before it runs
-# any of it, so a command that reads stdin cannot eat the rest of a piped
-# script.
-set -euo pipefail
+# Body of `nix run github:gurinderu/nix-config#bootstrap -- [tailscale-hostname]`
+# (packaged by ./bootstrap.nix with writeShellApplication, which adds the
+# shebang, `set -euo pipefail`, PATH for the pinned tools and HOME_MANAGER).
+# Sets up a fresh Ubuntu VM, whose login user has passwordless sudo and Nix
+# (multi-user) already installed, as the `cloud-vm` home-manager host.
+# Idempotent: every step checks before it acts, so re-running is safe.
+
+# Host tools (sudo, systemctl, apt-get, ufw, chsh, loginctl, sshd, tailscale)
+# come from the distro; keep its dirs on PATH after the pinned ones.
+PATH=$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+USER=${USER:-$(id -un)}
 
 REPO_URL=https://github.com/gurinderu/nix-config
 REPO_DIR=$HOME/projects/nix-config
-# Matches flake.nix's home-manager input.
-HM_REF=home-manager/release-26.05
+
+usage() {
+  cat <<'EOF'
+Usage: bootstrap [tailscale-hostname]
+
+Sets up this Ubuntu VM as the cloud-vm home-manager host: nix-daemon from
+root's profile, /etc/nix/nix.conf, ~/projects/nix-config checkout, first
+home-manager switch, zsh login shell, sshd keepalive, linger, ufw, tailscale.
+Run as the login user with passwordless sudo, after installing Nix.
+Without a hostname, tailscale keeps the machine's own name.
+EOF
+}
 
 step() { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 warn() { printf '    WARNING: %s\n' "$*" >&2; }
-
-# Downloads an installer script and runs it: run_remote_script URL CMD... --
-# ARGS..., i.e. CMD... <script> ARGS... (stdin from /dev/null).
-run_remote_script() {
-  local url=$1 tmp cmd=()
-  shift
-  while [ $# -gt 0 ] && [ "$1" != -- ]; do
-    cmd+=("$1")
-    shift
-  done
-  [ $# -gt 0 ] && shift
-  tmp=$(mktemp)
-  curl -fsSL "$url" -o "$tmp"
-  "${cmd[@]}" "$tmp" "$@" </dev/null
-  rm -f "$tmp"
+die() {
+  echo "$*" >&2
+  exit 1
 }
 
 # Writes stdin to a root-owned file only when the content differs.
@@ -55,18 +51,6 @@ write_root_file() {
   info "wrote $dst"
 }
 
-apt_install() {
-  local missing=()
-  local p
-  for p in "$@"; do
-    command -v "$p" >/dev/null 2>&1 || missing+=("$p")
-  done
-  [ ${#missing[@]} -eq 0 ] && return 0
-  info "apt-get install ${missing[*]}"
-  sudo apt-get update -qq </dev/null
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}" </dev/null
-}
-
 load_nix_env() {
   local f=/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
   if [ -e "$f" ]; then
@@ -82,40 +66,10 @@ load_nix_env() {
   export PATH
 }
 
-dns_sanity() {
-  step "DNS sanity"
-  if getent hosts github.com >/dev/null; then
-    info "github.com resolves"
-    return
-  fi
-  if systemctl is-active --quiet systemd-resolved; then
-    # Seen on a provider whose DHCP hands out DNS=127.0.0.1.
-    if printf '[Resolve]\nDNS=1.1.1.1 8.8.8.8\n' |
-      write_root_file /etc/systemd/resolved.conf.d/10-upstream.conf; then
-      sudo systemctl restart systemd-resolved
-      info "restarted systemd-resolved"
-    fi
-    getent hosts github.com >/dev/null || {
-      echo "github.com still does not resolve; fix DNS first" >&2
-      exit 1
-    }
-  else
-    echo "github.com does not resolve and systemd-resolved is not in use; fix DNS first" >&2
-    exit 1
-  fi
-}
-
-install_nix() {
-  step "Nix (multi-user)"
-  if [ -e /nix/var/nix/profiles/default/bin/nix ] || [ -e /etc/systemd/system/nix-daemon.service ]; then
-    info "already installed"
-  else
-    info "running the official installer (--daemon --yes)"
-    run_remote_script https://nixos.org/nix/install sh -- --daemon --yes
-  fi
-}
-
-# The daemon must run from a store path root's profile keeps alive (README).
+# The installer leaves the daemon units pointing at a store path only user
+# profiles hold (a GC could delete the running daemon's nix): install that nix
+# into root's profile (-p per-user/root/profile, which `default` links to) and
+# link the units from there. Upgrade later the same way.
 nix_root_profile() {
   step "nix-daemon from root's default profile"
   local d=/nix/var/nix/profiles/default/lib/systemd/system
@@ -127,10 +81,7 @@ nix_root_profile() {
     n=$(readlink -f "$unit" | sed 's|/lib/systemd/.*||')
     case $n in
       /nix/store/*) ;;
-      *)
-        echo "cannot find nix's store path from $unit ($n)" >&2
-        exit 1
-        ;;
+      *) die "cannot find nix's store path from $unit ($n); is Nix installed (--daemon)?" ;;
     esac
     info "installing $n into root's profile"
     sudo "$n/bin/nix-env" -p /nix/var/nix/profiles/per-user/root/profile -i "$n" </dev/null
@@ -160,7 +111,8 @@ nix_root_profile() {
   fi
 }
 
-# Without it the daemon ignores the caches from nix.settings in home.nix.
+# Without it the daemon ignores the caches from nix.settings in home.nix (the
+# user isn't trusted). A cache added there needs its URL and key here too.
 nix_conf() {
   step "/etc/nix/nix.conf"
   sudo mkdir -p /etc/nix
@@ -193,17 +145,14 @@ clone_repo() {
   fi
 }
 
+# -b backup moves pre-existing dotfiles aside instead of aborting.
 hm_switch() {
   step "home-manager switch (#cloud-vm)"
-  if command -v home-manager >/dev/null 2>&1; then
-    home-manager switch -b backup --flake "$REPO_DIR#cloud-vm" </dev/null
-  else
-    NIX_CONFIG="experimental-features = nix-command flakes" \
-      nix run "$HM_REF" -- switch -b backup --flake "$REPO_DIR#cloud-vm" </dev/null
-  fi
+  "$HOME_MANAGER" switch -b backup --flake "$REPO_DIR#cloud-vm" </dev/null
   load_nix_env
 }
 
+# Standalone home-manager can't change the login shell.
 login_shell() {
   step "login shell zsh"
   local z=$HOME/.nix-profile/bin/zsh
@@ -223,6 +172,8 @@ login_shell() {
   fi
 }
 
+# A dropped ssh session goes away within ~30 s instead of lingering with its
+# herdr client attached (which makes reattaching hang behind it).
 sshd_keepalive() {
   step "sshd keepalive"
   if printf 'ClientAliveInterval 10\nClientAliveCountMax 3\n' |
@@ -233,6 +184,7 @@ sshd_keepalive() {
   fi
 }
 
+# For the osewa user service.
 linger() {
   step "linger for $USER"
   if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ]; then
@@ -246,7 +198,11 @@ linger() {
 # mosh and osewa only over tailscale; every other default stays allow.
 firewall() {
   step "ufw (mosh 60000:61000/udp, osewa 7322 over tailscale0 only)"
-  apt_install ufw
+  if ! command -v ufw >/dev/null 2>&1; then
+    info "apt-get install ufw"
+    sudo apt-get update -qq </dev/null
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw </dev/null
+  fi
   sudo ufw default allow incoming >/dev/null
   sudo ufw default allow routed >/dev/null
   sudo ufw allow in on tailscale0 to any port 60000:61000 proto udp >/dev/null
@@ -269,7 +225,11 @@ tailscale_up() {
   step "tailscale"
   if ! command -v tailscale >/dev/null 2>&1; then
     info "installing via tailscale.com/install.sh"
-    run_remote_script https://tailscale.com/install.sh sudo sh --
+    local tmp
+    tmp=$(mktemp)
+    curl -fsSL https://tailscale.com/install.sh -o "$tmp"
+    sudo sh "$tmp" </dev/null
+    rm -f "$tmp"
   fi
   if tailscale status >/dev/null 2>&1; then
     info "already logged in"
@@ -296,28 +256,26 @@ summary() {
   step "Done. Left to do by hand:"
   [ "$TS_STATE" = up ] || info "- finish the tailscale login: sudo tailscale up --ssh=false${1:+ --hostname=$1}"
   info "- log out and back in for the zsh login shell"
-  info "- from the Mac, enroll osewa: osewa login ubuntu@$host --no-install --name $host"
-  info "- per-account logins (gh, claude, codex, ...) and any ssh keys; cloud-vm"
-  info "  has no sops secrets, so nothing here can decrypt them for you"
-  info "- moshi-hook pairing (users/common/moshi-hook.nix) and the herdr-server"
-  info "  cutover (README) if wanted"
+  info "- on the Mac, enroll osewa: osewa login ubuntu@$host --no-install --name $host"
+  info "- per-account logins (gh, claude, codex, ...) and ssh keys (no sops here)"
+  info "- moshi-hook pairing (users/common/moshi-hook.nix)"
+  info "- herdr unit, when losing panes is fine: herdr server stop && systemctl --user start herdr-server"
+  info "  (then autostart = true in hosts/cloud-vm/herdr-server.nix)"
   info "- optional NetBird: one-time root steps in hosts/cloud-vm/netbird.nix"
   info "Later switches: home-manager switch --flake $REPO_DIR#cloud-vm"
 }
 
 main() {
+  case ${1:-} in
+    -h | --help)
+      usage
+      return
+      ;;
+    -*) die "unknown option $1 (see --help)" ;;
+  esac
   local host=${1:-}
-  if [ "$(id -u)" = 0 ]; then
-    echo "run as the login user (with passwordless sudo), not root" >&2
-    exit 1
-  fi
-  sudo -n true 2>/dev/null || {
-    echo "needs passwordless sudo" >&2
-    exit 1
-  }
-  dns_sanity
-  apt_install curl git
-  install_nix
+  [ "$(id -u)" != 0 ] || die "run as the login user (with passwordless sudo), not root"
+  sudo -n true 2>/dev/null || die "needs passwordless sudo"
   nix_root_profile
   nix_conf
   clone_repo

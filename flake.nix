@@ -300,6 +300,12 @@
           }
           ''printf '%s\n' "$macSystemDrv" > $out'';
 
+      # One-command setup of a fresh cloud-vm (README "Install").
+      packages.x86_64-linux.bootstrap = import ./hosts/cloud-vm/bootstrap.nix {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        home-manager = home-manager.packages.x86_64-linux.home-manager;
+      };
+
       homeConfigurations."cloud-vm" = import ./hosts/cloud-vm {
         inherit inputs nixpkgs home-manager;
       };

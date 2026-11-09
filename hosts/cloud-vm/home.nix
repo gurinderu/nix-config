@@ -17,10 +17,10 @@
     # NetBird mesh client; the root-side systemd link is manual (see module).
     ./netbird.nix
     # osewa server (persistent terminals, next to mosh); enrollment, linger
-    # and the firewall are manual (see module and README).
+    # and the firewall come from the bootstrap (see module).
     ./osewa.nix
     # Memory-capped systemd unit for the herdr server; defined, not yet
-    # started (cutover steps in the module and README).
+    # started (cutover steps in the module).
     ./herdr-server.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
@@ -249,8 +249,8 @@
   # ~/.config/nix/nix.conf. Nix here is a multi-user (daemon) install and
   # this user is not in trusted-users, so the daemon only uses these
   # substituters because /etc/nix/nix.conf lists them in
-  # extra-trusted-substituters, with their keys (one-time root step, README
-  # "Cloud VM"). The keys live only there: a client-side trusted-public-keys
+  # extra-trusted-substituters, with their keys (written by
+  # hosts/cloud-vm/bootstrap.nix). The keys live only there: a client-side trusted-public-keys
   # is a restricted setting the daemon ignores, with a warning on every
   # command.
   # Binary caches for the agent inputs: clauth/codegraph build from source, and

@@ -5,7 +5,7 @@
 # Upstream's way in is `osewa login --service me@host` from the client, which
 # over ssh copies a binary to ~/.local/bin/osewa, writes
 # ~/.config/systemd/user/osewa.service and enables it. Here nix owns both, so
-# the Mac enrolls with `osewa login --no-install` (README "osewa"), which runs
+# the Mac enrolls with `osewa login --no-install` (users/gurinderu/osewa.nix), which runs
 # only `osewa enroll && osewa server --daemon` on the VM:
 #
 #   * `enroll` reads the device's public key on stdin, adds it to
@@ -38,11 +38,11 @@
 # builds theirs from scratch (session_env in upstream's crates/paths) with a
 # fixed /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin plus what the client
 # sends, and looks up `exec` / `new -- cmd` in that. Hence `exec --env PATH=`
-# and absolute paths for nix tools (README "osewa").
+# and absolute paths for nix tools.
 #
 # A user service only runs without a login session with lingering on
-# (`sudo loginctl enable-linger ubuntu`, README). The firewall (README) keeps
-# 7322 to tailscale0.
+# (`sudo loginctl enable-linger ubuntu`, done by the bootstrap,
+# hosts/cloud-vm/bootstrap.nix). Its ufw rules keep 7322 to tailscale0.
 #
 # State: keys and enrolled devices in ~/.config/osewa (server.key, devices,
 # settings.json), holder sockets and the server lock in

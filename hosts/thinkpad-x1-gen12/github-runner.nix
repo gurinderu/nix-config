@@ -13,8 +13,8 @@
 # registration-token refresher and the microvm.vms declarations. The guest
 # system is ./github-runner-vm.nix.
 #
-# Operating it (deploy, logs, rollback): README.md, "GitHub runner microVMs
-# (thinkpad)".
+# Deploy with `nixos-rebuild test` first (a reboot undoes it); per-VM state is
+# /var/lib/microvms/<name>/var.img (stop the VM, mount it ro for _diag logs).
 {
   config,
   lib,

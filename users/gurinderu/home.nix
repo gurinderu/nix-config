@@ -15,7 +15,7 @@
     ./ssh.nix
     ./sing-box.nix
     ./net-observer-bar.nix
-    # osewa client for the server on cloud-vm (enrollment is manual, README).
+    # osewa client for the server on cloud-vm (enrollment is manual, see module).
     ./osewa.nix
   ];
 

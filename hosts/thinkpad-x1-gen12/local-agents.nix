@@ -21,7 +21,7 @@
 # the LAN is an option (thinkpad.localAgents.allowLan). sandbox-local's own
 # bwrap (`--ro-bind / /`) only adds write confinement on top of that.
 #
-# Use, as 0xff (README, "Local agents (thinkpad)"):
+# Use, as 0xff:
 #   agent-import ~/src/foo        copy the repo in (git bundle; no hooks,
 #                                 config or hardlinks shared)
 #   agents foo                    infinity TUI in /var/lib/agent/work/foo

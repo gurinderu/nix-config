@@ -32,8 +32,8 @@
 # of a login-spawned server, these carry no SSH_CONNECTION.
 #
 # autostart = false: the unit is defined but neither enabled nor started, so
-# a switch leaves a running client-spawned server alone. Cutover (README
-# "herdr server unit"): stop the old server, `systemctl --user start
+# a switch leaves a running client-spawned server alone. Cutover: `herdr server
+# stop` (ends every pane), `systemctl --user start
 # herdr-server`, then flip autostart to true and switch, which adds
 # default.target.wants (linger is on, so it then comes up at boot).
 # `systemctl --user enable` doesn't work for this: home-manager owns the unit

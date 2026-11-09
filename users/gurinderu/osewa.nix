@@ -1,7 +1,8 @@
 # osewa client on the Mac: `osewa attach cloud-vm-1` etc. against the server on
 # cloud-vm (hosts/cloud-vm/osewa.nix), same pkgs/osewa version on both ends.
-# Enrolling this Mac is a one-time `osewa login --no-install ...` (README
-# "osewa"); it keeps the device key and hosts.json in ~/.config/osewa.
+# Enrolling this Mac is a one-time `osewa login ubuntu@<host> --no-install
+# --name <host>` (--no-install is required, see hosts/cloud-vm/osewa.nix); it
+# keeps the device key and hosts.json in ~/.config/osewa.
 #
 # Auto-update is pinned off: the CLI otherwise checks GitHub daily after
 # interactive commands and tries to replace its own (read-only, /nix/store)
