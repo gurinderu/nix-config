@@ -1,6 +1,9 @@
 keys:
   - &gurinderu age136r67xtts44mvg8a84mkeq4pfsv47gs5jkm7xddwnzwkfq3wwvnqrmj9s6
   - &thinkpad-x1-gen12 age1mzmfv3k2rw5ut0zn76y46wh7cl7x4ac6zh9mq08fpxxu23mqqdysnvwv3q
+  # ~/.config/sops/age/keys.txt on each cloud VM (made by the bootstrap).
+  - &cloud-vm-1 age1wu9nasegk5t499s5hj7uv6z4ak52yfpq72wps9r2x40mtuxeselsvwj0fz
+  - &cloud-vm-2 age1q3spgdnqwupxm725fpr23a8p5ga92y984ggqmfvc5wjms5d60yuqtvezcy
 
 # One file per recipient set, so each host's key decrypts only what that host
 # reads (layout: README "Secrets", secrets/default.nix). gurinderu is the Mac's
@@ -23,3 +26,11 @@ creation_rules:
     key_groups:
       - age:
           - *gurinderu
+  # Cloud VMs (Fluence mesh root CA). A new VM: add its key above and here,
+  # then `sops updatekeys secrets/cloud-vm.yaml`.
+  - path_regex: (^|/)secrets/cloud-vm\.yaml$
+    key_groups:
+      - age:
+          - *gurinderu
+          - *cloud-vm-1
+          - *cloud-vm-2

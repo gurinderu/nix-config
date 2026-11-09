@@ -145,6 +145,26 @@ clone_repo() {
   fi
 }
 
+# This VM's sops age key (hosts/cloud-vm/mesh-ca.nix). Never overwritten. Until
+# its public key is a recipient of secrets/cloud-vm.yaml, the switch only warns
+# that sops-nix could not decrypt, and the mesh CA step skips.
+AGE_PUB=
+age_key() {
+  step "sops age key"
+  local k=$HOME/.config/sops/age/keys.txt
+  if [ -e "$k" ]; then
+    info "$k exists"
+  else
+    mkdir -p "$(dirname "$k")"
+    chmod 700 "$(dirname "$k")"
+    (umask 077 && age-keygen -o "$k" 2>/dev/null)
+    info "created $k"
+  fi
+  chmod 600 "$k"
+  AGE_PUB=$(age-keygen -y "$k")
+  info "public key: $AGE_PUB"
+}
+
 # -b backup moves pre-existing dotfiles aside instead of aborting.
 hm_switch() {
   step "home-manager switch (#cloud-vm)"
@@ -257,7 +277,11 @@ summary() {
   [ "$TS_STATE" = up ] || info "- finish the tailscale login: sudo tailscale up --ssh=false${1:+ --hostname=$1}"
   info "- log out and back in for the zsh login shell"
   info "- on the Mac, enroll osewa: osewa login ubuntu@$host --no-install --name $host"
-  info "- per-account logins (gh, claude, codex, ...) and ssh keys (no sops here)"
+  info "- sops: if new, add $AGE_PUB to .sops.yaml, run"
+  info "  sops updatekeys secrets/cloud-vm.yaml, push, pull here and switch"
+  info "- mesh CA: sudo systemctl link ~/.config/systemd-system/mesh-ca.{service,path}"
+  info "  then: sudo systemctl enable --now mesh-ca.path mesh-ca.service"
+  info "- per-account logins (gh, claude, codex, ...) and ssh keys"
   info "- moshi-hook pairing (users/common/moshi-hook.nix)"
   info "- herdr unit, when losing panes is fine: herdr server stop && systemctl --user start herdr-server"
   info "  (then autostart = true in hosts/cloud-vm/herdr-server.nix)"
@@ -279,6 +303,7 @@ main() {
   nix_root_profile
   nix_conf
   clone_repo
+  age_key
   hm_switch
   login_shell
   sshd_keepalive

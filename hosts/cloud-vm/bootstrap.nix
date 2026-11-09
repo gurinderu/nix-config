@@ -8,6 +8,7 @@
 pkgs.writeShellApplication {
   name = "bootstrap";
   runtimeInputs = with pkgs; [
+    age
     coreutils
     curl
     git

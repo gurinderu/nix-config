@@ -19,6 +19,9 @@
     # Loopback accept ahead of tailscale's INPUT drop (NetBird DNS over lo);
     # root-side link is manual (see module).
     ./lo-accept.nix
+    # Fluence mesh root CA from sops into the system trust store; root-side
+    # link is manual (see module).
+    ./mesh-ca.nix
     # osewa server (persistent terminals, next to mosh); enrollment, linger
     # and the firewall come from the bootstrap (see module).
     ./osewa.nix
