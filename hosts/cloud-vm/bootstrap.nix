@@ -12,7 +12,6 @@ pkgs.writeShellApplication {
   runtimeInputs = with pkgs; [
     age
     coreutils
-    curl
     git
     gnugrep
     gnused

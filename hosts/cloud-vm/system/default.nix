@@ -1,7 +1,8 @@
 # Root side of cloud-vm, via numtide/system-manager: the systemd units that
 # standalone home-manager cannot own (the user side stays in ../home.nix).
 #
-#   cloud-vm          every VM: the mesh root CA (./mesh-ca.nix)
+#   cloud-vm          every VM: the mesh root CA (./mesh-ca.nix) and
+#                     tailscaled (./tailscale.nix)
 #   cloud-vm-netbird  the base + the NetBird client (./netbird.nix) and the
 #                     loopback accept its DNS needs (./lo-accept.nix);
 #                     only VMs on the NetBird mesh (cloud-vm-1)

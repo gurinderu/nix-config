@@ -25,7 +25,7 @@
 # resolved /nix/store path baked in, in a file nix does not own, which then
 # goes stale (and eventually GC'd) on the next bump.
 #
-# Coexistence with tailscale (apt-installed, tailscale0, also 100.64.0.0/10):
+# Coexistence with tailscale (./tailscale.nix, tailscale0, also 100.64.0.0/10):
 # tailscale's ts-input chain drops 100.64.0.0/10 sources arriving on any
 # interface but tailscale0, but netbird inserts its own `-i wt0 -j ACCEPT` as
 # the first INPUT rule, ahead of the ts-input jump, so wt0 traffic gets

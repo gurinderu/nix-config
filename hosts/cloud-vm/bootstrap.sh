@@ -6,8 +6,8 @@
 # (multi-user) already installed, as the `cloud-vm` home-manager host.
 # Idempotent: every step checks before it acts, so re-running is safe.
 
-# Host tools (sudo, systemctl, apt-get, ufw, chsh, loginctl, sshd, tailscale)
-# come from the distro; keep its dirs on PATH after the pinned ones.
+# Host tools (sudo, systemctl, apt-get, ufw, chsh, loginctl, sshd) come from
+# the distro; keep its dirs on PATH after the pinned ones.
 PATH=$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 USER=${USER:-$(id -un)}
@@ -22,7 +22,8 @@ Usage: bootstrap [--netbird] [tailscale-hostname]
 Sets up this Ubuntu VM as the cloud-vm host: nix-daemon from root's profile,
 /etc/nix/nix.conf, ~/projects/nix-config checkout, first home-manager
 switch, apt uidmap (rootless podman), system-manager switch, zsh login shell,
-sshd keepalive, linger, ufw, tailscale.
+sshd keepalive, linger, ufw, tailscale login (the daemon comes from the
+system-manager switch, the CLI from home-manager).
 Run as the login user with passwordless sudo, after installing Nix.
 Without a hostname, tailscale keeps the machine's own name.
 
@@ -302,22 +303,32 @@ firewall() {
   fi
 }
 
+# tailscaled is system-manager's (hosts/cloud-vm/system/tailscale.nix), started
+# by sm_switch; the CLI is home-manager's. sudo's secure_path lacks the nix
+# profile, hence the full path. A VM that still has the apt package is left
+# alone: the switch linked the nix unit over the .deb's but did not restart the
+# running daemon, and the bootstrap may itself be running over tailscale, so
+# the restart and the package removal stay a by-hand step (see that module).
 TS_STATE=unknown
+TS=$HOME/.nix-profile/bin/tailscale
 tailscale_up() {
   local host=$1
   step "tailscale"
-  if ! command -v tailscale >/dev/null 2>&1; then
-    info "installing via tailscale.com/install.sh"
-    local tmp
-    tmp=$(mktemp)
-    curl -fsSL https://tailscale.com/install.sh -o "$tmp"
-    sudo sh "$tmp" </dev/null
-    rm -f "$tmp"
+  if [ "$(dpkg-query -W -f='${Status}' tailscale 2>/dev/null)" = "install ok installed" ]; then
+    warn "apt tailscale still installed; left running as is. Migrate by hand:"
+    warn "see hosts/cloud-vm/system/tailscale.nix"
   fi
-  if tailscale status >/dev/null 2>&1; then
+  if [ ! -x "$TS" ]; then
+    warn "$TS missing (home-manager switch failed?); skipping"
+    TS_STATE=pending
+    return
+  fi
+  systemctl -q is-active tailscaled ||
+    warn "tailscaled is not active (systemctl status tailscaled)"
+  if "$TS" status >/dev/null 2>&1; then
     info "already logged in"
     if [ -n "$host" ]; then
-      sudo tailscale set --hostname="$host" </dev/null
+      sudo "$TS" set --hostname="$host" </dev/null
       info "hostname set to $host"
     fi
     TS_STATE=up
@@ -326,10 +337,10 @@ tailscale_up() {
   local args=(--ssh=false --timeout=10m)
   [ -n "$host" ] && args+=("--hostname=$host")
   info "open the login URL below to add this machine (waits up to 10 min)"
-  if sudo tailscale up "${args[@]}" </dev/null; then
+  if sudo "$TS" up "${args[@]}" </dev/null; then
     TS_STATE=up
   else
-    warn "tailscale up did not finish; re-run: sudo tailscale up ${args[*]}"
+    warn "tailscale up did not finish; re-run: sudo $TS up ${args[*]}"
     TS_STATE=pending
   fi
 }
@@ -337,7 +348,7 @@ tailscale_up() {
 summary() {
   local host=${1:-<tailscale-name>}
   step "Done. Left to do by hand:"
-  [ "$TS_STATE" = up ] || info "- finish the tailscale login: sudo tailscale up --ssh=false${1:+ --hostname=$1}"
+  [ "$TS_STATE" = up ] || info "- finish the tailscale login: sudo $TS up --ssh=false${1:+ --hostname=$1}"
   info "- log out and back in for the zsh login shell"
   info "- on the Mac, enroll osewa: osewa login ubuntu@$host --no-install --name $host"
   info "- sops: if new, add $AGE_PUB to .sops.yaml, run"

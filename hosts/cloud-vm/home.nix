@@ -16,6 +16,8 @@
     ./herdr-tab-title.nix
     # NetBird CLI; the daemon is system-manager's (./system/netbird.nix).
     ./netbird.nix
+    # tailscale CLI; the daemon is system-manager's (./system/tailscale.nix).
+    ./tailscale.nix
     # Fluence mesh root CA decrypted by sops; system-manager's root units
     # (./system/mesh-ca.nix) put it into the system trust store.
     ./mesh-ca.nix

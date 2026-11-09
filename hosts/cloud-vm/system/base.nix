@@ -39,5 +39,8 @@
     environment.corePackages = lib.mkForce [ ];
   };
 
-  imports = [ ./mesh-ca.nix ];
+  imports = [
+    ./mesh-ca.nix
+    ./tailscale.nix
+  ];
 }

@@ -39,9 +39,9 @@ in root's profile, writes `/etc/nix/nix.conf` (trusted caches), clones this
 repo to `~/projects/nix-config`, makes the sops age key, runs the first
 home-manager switch, installs apt `uidmap` (rootless podman), runs the
 system-manager switch (`systemConfigs.cloud-vm`, or `cloud-vm-netbird` with
-`--netbird` or when NetBird already runs), sets zsh as login shell, sshd
-keepalive, linger, ufw (mosh and osewa on `tailscale0` only) and tailscale,
-then prints what is left by hand (tailscale login click, osewa enroll from
+`--netbird` or when NetBird already runs; it also brings up tailscaled from
+nixpkgs, no apt repo), sets zsh as login shell, sshd keepalive, linger, ufw
+(mosh and osewa on `tailscale0` only) and `tailscale up`, then prints what is left by hand (tailscale login click, osewa enroll from
 the Mac, per-account logins).
 
 On a bare VM, install Nix first:
@@ -65,7 +65,9 @@ nix run .#system-manager -- switch --flake .#cloud-vm --sudo   # cloud-vm-netbir
 ```
 
 system-manager's `activate` can exit 0 with a unit failed: check
-`systemctl --failed` after a switch.
+`systemctl --failed` after a switch. A switch that changes tailscaled's unit restarts
+it, which blips ssh/mosh over tailscale; on cloud-vm-1 restart netbird
+afterwards (`hosts/cloud-vm/system/tailscale.nix`).
 
 Over SSH riding the thinkpad's own network (tailscale through sing-box), a
 `switch` can drop the session halfway: use `sudo nixos-rebuild boot --flake
