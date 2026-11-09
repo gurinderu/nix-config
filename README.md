@@ -42,87 +42,69 @@ sudo nixos-rebuild boot --flake .#thinkpad-x1-gen12 && sudo reboot
 
 or run the `switch` inside tmux/zellij on the host, so it survives the drop.
 
-Cloud VM (non-NixOS, standalone home-manager):
+Cloud VM (non-NixOS, standalone home-manager). A fresh Ubuntu VM whose login
+user has passwordless sudo is set up in one go:
 
 ```
-nix run home-manager/release-26.05 -- switch --flake .#cloud-vm   # first time
+curl -fsSL https://raw.githubusercontent.com/gurinderu/nix-config/main/hosts/cloud-vm/bootstrap.sh | bash -s -- <tailscale-hostname>
+```
+
+`hosts/cloud-vm/bootstrap.sh` is idempotent (each step checks first, so it is
+safe to re-run) and does, in order:
+
+- DNS: if `github.com` doesn't resolve under systemd-resolved, adds
+  `DNS=1.1.1.1 8.8.8.8` (some provider DHCP hands out `DNS=127.0.0.1`).
+- Nix, multi-user (official installer, `--daemon --yes`), then the root-profile
+  and `/etc/nix/nix.conf` fixes below.
+- Clones this repo to `~/projects/nix-config` (or pulls) and runs the first
+  switch: `NIX_CONFIG="experimental-features = nix-command flakes" nix run
+  home-manager/release-26.05 -- switch -b backup --flake ...#cloud-vm` (`-b
+  backup` moves pre-existing dotfiles aside instead of aborting).
+- Login shell zsh from the nix profile (`/etc/shells` + `chsh`); standalone
+  home-manager can't change it.
+- sshd keepalive (`ClientAliveInterval 10`, `ClientAliveCountMax 3` in
+  `/etc/ssh/sshd_config.d/10-keepalive.conf`), so a dropped ssh session goes
+  away within ~30 s instead of lingering for hours with its herdr client still
+  attached, which makes reattaching from a new login hang behind it.
+- `loginctl enable-linger`, for the osewa user service.
+- ufw: every default stays `allow`; mosh's UDP 60000:61000 and osewa's 7322
+  (TCP+UDP) are accepted on `tailscale0` and denied elsewhere.
+- Tailscale (official install script if missing), `tailscale up --ssh=false
+  --hostname=<arg>` when not logged in (it prints a login URL to open), or
+  `tailscale set --hostname` when it is.
+
+Left by hand: the tailscale login click if it timed out, a re-login for zsh,
+the osewa enrollment from the Mac (see osewa below), per-account logins (gh,
+claude, codex, ssh keys; cloud-vm has no sops secrets) and moshi-hook
+pairing.
+
+Later switches:
+
+```
 home-manager switch --flake .#cloud-vm
 ```
 
-First time, before flakes are enabled by the profile's own nix.conf, prefix the
-`nix run` with `NIX_CONFIG="experimental-features = nix-command flakes"` and add
-`-b backup` so pre-existing dotfiles are moved aside instead of aborting.
-
-Standalone home-manager can't change the login shell, so set zsh once by hand:
-
-```
-Z=$HOME/.nix-profile/bin/zsh
-grep -qxF "$Z" /etc/shells || echo "$Z" | sudo tee -a /etc/shells
-sudo chsh -s "$Z" "$USER"
-```
-
-Make sshd drop dead connections within ~30 s. Otherwise a dropped ssh session
-lingers for hours with its herdr client still attached, and reattaching to
-the herdr session from a new login hangs behind it:
-
-```
-printf 'ClientAliveInterval 10\nClientAliveCountMax 3\n' | sudo tee /etc/ssh/sshd_config.d/10-keepalive.conf
-sudo sshd -t && sudo systemctl reload ssh
-```
-
-Accept mosh over tailscale only. Every other default stays `allow`, so the only
-change is that mosh's UDP range is closed outside the tailnet:
-
-```
-sudo ufw default allow incoming
-sudo ufw default allow routed
-sudo ufw allow in on tailscale0 to any port 60000:61000 proto udp
-sudo ufw deny 60000:61000/udp
-sudo ufw --force enable
-```
-
-The nix daemon must run from a store path that root's profile keeps alive.
-The `--daemon` installer here left `/nix/var/nix/profiles/default` (->
-`per-user/root/profile`) dangling and the units in `/etc/systemd/system`
-pointing straight at a store path that only user profiles held, so a GC could
-have deleted the running daemon's nix. Once, as root, put that nix into the
-default profile and point the units there:
-
-```
-N=$(readlink -f /etc/systemd/system/nix-daemon.service | sed 's|/lib/systemd/.*||')   # .../nix-2.35.2
-sudo $N/bin/nix-env -p /nix/var/nix/profiles/per-user/root/profile -i $N
-D=/nix/var/nix/profiles/default/lib/systemd/system
-sudo ln -sfn $D/nix-daemon.service /etc/systemd/system/nix-daemon.service
-sudo ln -sfn $D/nix-daemon.socket /etc/systemd/system/nix-daemon.socket
-sudo ln -sfn /etc/systemd/system/nix-daemon.socket /etc/systemd/system/sockets.target.wants/nix-daemon.socket
-sudo systemctl daemon-reload
-nix store info    # Store URL: daemon
-```
-
-(`-p per-user/root/profile` rather than `-p default`: `default` is a link to
-it, and `nix-env -p default` would replace that link with its own generations.)
-To upgrade the daemon later, `nix-env -p ... -i` a newer nix the same way and
-`sudo systemctl restart nix-daemon` when no build is running.
+Why the nix fixes: the nix daemon must run from a store path that root's
+profile keeps alive. The `--daemon` installer here left
+`/nix/var/nix/profiles/default` (-> `per-user/root/profile`) dangling and the
+units in `/etc/systemd/system` pointing straight at a store path that only
+user profiles held, so a GC could have deleted the running daemon's nix. The
+script installs that nix into root's profile with `nix-env -p
+/nix/var/nix/profiles/per-user/root/profile -i` (rather than `-p default`:
+`default` is a link to it, and `nix-env -p default` would replace that link
+with its own generations) and links the units from
+`/nix/var/nix/profiles/default/lib/systemd/system`. To upgrade the daemon
+later, `nix-env -p ... -i` a newer nix the same way and `sudo systemctl
+restart nix-daemon` when no build is running.
 
 The installer also wrote no `/etc/nix/nix.conf`. Without one the daemon
 ignores the binary caches from `nix.settings` in `hosts/cloud-vm/home.nix`
 ("ignoring untrusted substituter", the user isn't trusted), so llm-agents and
-claude get built from source. Once, as root (`/etc/nix` is created read-only):
-
-```
-sudo chmod 755 /etc/nix
-sudo tee /etc/nix/nix.conf <<'NIXCONF'
-build-users-group = nixbld
-experimental-features = nix-command flakes
-extra-trusted-substituters = https://cache.numtide.com https://ryoppippi.cachix.org
-extra-trusted-public-keys = niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g= ryoppippi.cachix.org-1:b2LbtWNvJeL/qb1B6TYOMK+apaCps4SCbzlPRfSQIms=
-NIXCONF
-sudo systemctl restart nix-daemon    # when no build is running
-```
-
-`build-users-group = nixbld` is what the daemon used by default; writing it
-down keeps builds on the nixbld users. A cache added to `nix.settings` later
-needs its URL and key here too.
+claude get built from source. The script writes `build-users-group = nixbld`
+(what the daemon used by default; keeps builds on the nixbld users), the
+flakes feature and `extra-trusted-substituters` / `extra-trusted-public-keys`
+for cache.numtide.com and ryoppippi.cachix.org. A cache added to
+`nix.settings` later needs its URL and key in the script's `nix.conf` too.
 
 home-manager runs `nix-collect-garbage --delete-older-than 14d` weekly
 (`nix.gc` in `hosts/cloud-vm/home.nix`, `systemctl --user list-timers
@@ -260,52 +242,6 @@ Whatever it writes is untrusted code: read it before you build or run it,
 especially `.envrc`, build scripts and CI files. It can read world-readable
 files (`/nix/store`, `/etc`) and use CPU, RAM and disk without a cap.
 
-# netbird on cloud-vm
-
-`hosts/cloud-vm/netbird.nix` puts `netbird` on PATH and writes a systemd
-unit to `~/.config/systemd-system/netbird.service`; root links it in once
-(home-manager can't own a system unit). sudo's `secure_path` lacks the nix
-profile, so root calls need the full path (plain `sudo netbird` fails with "No
-such file or directory"); non-root `netbird status` works as is:
-
-```
-sudo systemctl link ~/.config/systemd-system/netbird.service
-sudo systemctl enable --now netbird
-netbird status    # Daemon status: NeedsLogin
-sudo ~/.nix-profile/bin/netbird up --management-url https://SING_BOX_NETBIRD_MGMT_DOMAIN:443 --no-browser
-```
-
-`--no-browser` prints an `https://SING_BOX_IDP_DOMAIN/device?code=...`
-link (device code, valid 10 min; consent screen "NetBird CLI login", served by
-the public authentik client `netbird-cli`). The `--management-url` on the
-first `up` is required: the unit passes the same URL to `netbird service run`,
-but that doesn't seed a new profile, which starts out pointing at
-`api.netbird.io` (checked on 0.75.1). `up` saves the URL to
-`/var/lib/netbird/default.json`, so later `up` calls can leave it out. The
-session expires after 24h unless login expiration is disabled for the peer in
-the dashboard; `up --setup-key <key>` is the alternative.
-
-After a switch that changes the unit (the switch says so), reload it:
-
-```
-sudo systemctl daemon-reload && sudo systemctl restart netbird
-```
-
-State is in `/var/lib/netbird`, the log in `/var/log/netbird/client.log`
-(plus `journalctl -u netbird`). Remove: `sudo systemctl disable --now netbird`,
-which also drops the link.
-
-Tailscale shares 100.64.0.0/10 (netbird peers are in 100.90.0.0/16). Its
-`ts-input` chain drops any 100.64.0.0/10 source that doesn't come in on
-`tailscale0`, but netbird inserts `-A INPUT -i wt0 -j ACCEPT` as the first
-`INPUT` rule, ahead of the `ts-input` jump, so `wt0` traffic gets through
-(checked after login). A tailscaled restart could re-order the rules; check
-with `sudo iptables -S INPUT`. Don't use
-`tailscale set --netfilter-mode=nodivert`: that also drops the
-`ts-postrouting` masquerade this node's exit-node offer needs. Routes don't
-clash: tailscale only installs /32s for its own peers (table 52), so netbird's
-subnet route via `wt0` loses only on an address both meshes hand out.
-
 # herdr server unit (cloud-vm)
 
 `hosts/cloud-vm/herdr-server.nix` defines `herdr-server.service`, a systemd
@@ -359,27 +295,16 @@ port forwards and exec as well. mosh stays as it is.
 Both activations run `osewa set auto-update off`: nix owns upgrades, and
 osewa must never replace its own binary.
 
-Once, on the VM, so the user service runs without a login session, and to
-accept 7322 over tailscale and netbird only (same pattern as mosh above):
-
-```
-sudo loginctl enable-linger ubuntu
-sudo ufw allow in on tailscale0 to any port 7322 proto tcp
-sudo ufw allow in on tailscale0 to any port 7322 proto udp
-sudo ufw allow in on wt0 to any port 7322 proto tcp
-sudo ufw allow in on wt0 to any port 7322 proto udp
-sudo ufw deny 7322/tcp
-sudo ufw deny 7322/udp
-```
-
-tailscale0 and wt0 are already accepted ahead of ufw (`ts-input`, netbird's
-`-i wt0 -j ACCEPT`), so the deny rules are what matters: they close 7322 on the
+The bootstrap script (see Rebuild above) enables linger, so the user service
+runs without a login session, and accepts 7322 (TCP+UDP) on `tailscale0` only,
+denying it elsewhere. tailscale0 is already accepted ahead of ufw
+(`ts-input`), so the deny rules are what matters: they close 7322 on the
 public interface.
 
 Enroll the Mac, once (after both switches):
 
 ```
-osewa login ubuntu@100.72.145.54 --no-install --name fluence
+osewa login ubuntu@cloud-vm-1 --no-install --name cloud-vm-1
 ```
 
 `--no-install` is required. It makes `login` run only `osewa enroll && osewa
@@ -389,21 +314,20 @@ it alone. Ignore the hint `login` prints afterwards ("won't come back after
 ... reboots; ... --service"): the systemd unit and linger take care of that.
 Don't use plain `login` (it copies a binary to `~/.local/bin/osewa`), `login
 --service` (it writes its own unit over home-manager's), or `osewa update
-fluence`. Each of them replaces a file nix owns. To use netbird instead,
-log in with `ubuntu@<netbird-peer>` (or `--addr <peer>.nb:7322`). The
-server address saved on the Mac is the ssh target's host, port 7322. Keys and
-hosts are in `~/.config/osewa` on both ends.
+cloud-vm-1`. Each of them replaces a file nix owns. The server address saved
+on the Mac is the ssh target's host (`cloud-vm-1`, tailscale MagicDNS) with
+port 7322. Keys and hosts are in `~/.config/osewa` on both ends.
 
 Use from the Mac:
 
 ```
-osewa attach fluence          # attach to a session (or create one): zsh -l
-osewa attach fluence <id>     # a given one; ~. detaches
-osewa new fluence -- /home/ubuntu/.nix-profile/bin/herdr   # a session running herdr
-osewa ls fluence
-osewa exec fluence --env PATH=/home/ubuntu/.nix-profile/bin:/usr/bin:/bin \
+osewa attach cloud-vm-1       # attach to a session (or create one): zsh -l
+osewa attach cloud-vm-1 <id>  # a given one; ~. detaches
+osewa new cloud-vm-1 -- /home/ubuntu/.nix-profile/bin/herdr   # a session running herdr
+osewa ls cloud-vm-1
+osewa exec cloud-vm-1 --env PATH=/home/ubuntu/.nix-profile/bin:/usr/bin:/bin \
   -- zsh -lc 'git -C ~/projects/nix-config status'
-osewa forward fluence 3000
+osewa forward cloud-vm-1 3000
 ```
 
 `exec` and `new <host> -- cmd` look the command up in osewa's own fixed PATH

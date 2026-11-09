@@ -277,7 +277,7 @@ in
       {
         # Mesh/cluster-internal names. The loop question this rule shared with
         # the other `local` rules is answered for darwin — measured 2026-09-09
-        # on the Mac (see the tailscale rule below): <peer>.nb dug via
+        # on the Mac (see the tailscale rule below): a fluence.nb name dug via
         # the pin returned an upstream NXDOMAIN in 34ms, i.e. `local`
         # forwarded out and answered, no loop (the Linux host has no pin to
         # loop through). Whether these names SHOULD resolve to something (a

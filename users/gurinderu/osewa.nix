@@ -1,4 +1,4 @@
-# osewa client on the Mac: `osewa attach fluence` etc. against the server on
+# osewa client on the Mac: `osewa attach cloud-vm-1` etc. against the server on
 # cloud-vm (hosts/cloud-vm/osewa.nix), same pkgs/osewa version on both ends.
 # Enrolling this Mac is a one-time `osewa login --no-install ...` (README
 # "osewa"); it keeps the device key and hosts.json in ~/.config/osewa.

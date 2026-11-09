@@ -17,7 +17,7 @@
 # with only .zshenv: /etc/environment plus ~/.local/bin (home.sessionPath),
 # but NOT ~/.nix-profile/bin. Hence the ~/.local/bin/osewa symlink below. Do
 # not use `login` without --no-install, `login --service` or `osewa update
-# fluence`: they write a real binary over that symlink, or the unit file over
+# cloud-vm-1`: they write a real binary over that symlink, or the unit file over
 # home-manager's (the switch then stops on the collision).
 #
 # The unit mirrors upstream's (`service install`: KillMode=process, so a
@@ -42,7 +42,7 @@
 #
 # A user service only runs without a login session with lingering on
 # (`sudo loginctl enable-linger ubuntu`, README). The firewall (README) keeps
-# 7322 to tailscale0 and wt0.
+# 7322 to tailscale0.
 #
 # State: keys and enrolled devices in ~/.config/osewa (server.key, devices,
 # settings.json), holder sockets and the server lock in

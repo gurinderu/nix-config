@@ -277,7 +277,7 @@ let
     # Tailscale's MagicDNS resolver (resolv.conf points at it), DNS only.
     "-d 100.100.100.100 -p udp --dport 53 -j RETURN"
     "-d 100.100.100.100 -p tcp --dport 53 -j RETURN"
-    # Tailnet (NetBird's 100.90.0.0/16 is inside it too).
+    # Tailnet (NetBird's peer range is inside it too).
     "-d 100.64.0.0/10 -j DROP"
     # Host podman networks and the runner VMs' 10.89.255.0/24
     # (configuration.nix, github-runner.nix); libvirt's default NAT network.
