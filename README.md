@@ -35,14 +35,19 @@ nix --extra-experimental-features 'nix-command flakes' run github:gurinderu/nix-
 ```
 
 The bootstrap (`hosts/cloud-vm/bootstrap.sh`, idempotent) roots the nix daemon
-in root's profile, writes `/etc/nix/nix.conf` (trusted caches), clones this
-repo to `~/projects/nix-config`, makes the sops age key, runs the first
+in root's profile, writes `/etc/nix/nix.conf` (trusted caches), makes the sops age key, clones
+this repo to `~/projects/nix-config`, runs the first
 home-manager switch, installs apt `uidmap` (rootless podman), runs the
 system-manager switch (`systemConfigs.cloud-vm`, or `cloud-vm-netbird` with
 `--netbird` or when NetBird already runs; it also brings up tailscaled from
 nixpkgs, no apt repo), sets zsh as login shell, sshd keepalive, linger, ufw
-(mosh and osewa on `tailscale0` only) and `tailscale up`, then prints what is left by hand (tailscale login click, osewa enroll from
-the Mac, per-account logins).
+(mosh and osewa on `tailscale0` only) and `tailscale up`, then prints what is
+left by hand (osewa enroll from the Mac, per-account logins). Tailscale needs
+no browser: it joins as `tag:cloud-vm` with the OAuth client secret
+`tailscale_oauth` from `secrets/cloud-vm.yaml`. A new VM's age key is not a
+recipient yet, so the first run prints the key and how to add it (`.sops.yaml`,
+`sops updatekeys secrets/cloud-vm.yaml` on the Mac, push) and stops; re-run it
+then. `--interactive-login` uses the browser login instead.
 
 On a bare VM, install Nix first:
 `sh <(curl -L https://nixos.org/nix/install) --daemon --yes`, then open a new

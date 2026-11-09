@@ -1,4 +1,4 @@
-# Body of `nix run github:gurinderu/nix-config#bootstrap -- [--netbird] [tailscale-hostname]`
+# Body of `nix run github:gurinderu/nix-config#bootstrap -- [--netbird] [--interactive-login] [tailscale-hostname]`
 # (packaged by ./bootstrap.nix with writeShellApplication, which adds the
 # shebang, `set -euo pipefail`, PATH for the pinned tools, HOME_MANAGER and
 # SYSTEM_MANAGER).
@@ -17,19 +17,25 @@ REPO_DIR=$HOME/projects/nix-config
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap [--netbird] [tailscale-hostname]
+Usage: bootstrap [--netbird] [--interactive-login] [tailscale-hostname]
 
 Sets up this Ubuntu VM as the cloud-vm host: nix-daemon from root's profile,
 /etc/nix/nix.conf, ~/projects/nix-config checkout, first home-manager
 switch, apt uidmap (rootless podman), system-manager switch, zsh login shell,
-sshd keepalive, linger, ufw, tailscale login (the daemon comes from the
-system-manager switch, the CLI from home-manager).
+sshd keepalive, linger, ufw, tailscale login as tag:cloud-vm with the sops
+OAuth secret, no browser (the daemon comes from the system-manager switch,
+the CLI from home-manager). A new VM's age key must first be added as a
+recipient of secrets/cloud-vm.yaml: the tailscale step prints how and stops;
+then re-run.
 Run as the login user with passwordless sudo, after installing Nix.
 Without a hostname, tailscale keeps the machine's own name.
 
 --netbird  apply systemConfigs.cloud-vm-netbird (adds the NetBird daemon)
            instead of the base systemConfigs.cloud-vm. A VM that already
            runs netbird.service keeps the netbird config without the flag.
+--interactive-login
+           log tailscale in by browser (a login URL) instead of with the
+           OAuth secret, e.g. before this VM's age key is a recipient.
 EOF
 }
 
@@ -154,7 +160,8 @@ clone_repo() {
 
 # This VM's sops age key (hosts/cloud-vm/mesh-ca.nix). Never overwritten. Until
 # its public key is a recipient of secrets/cloud-vm.yaml, the switch only warns
-# that sops-nix could not decrypt, and the mesh CA step skips.
+# that sops-nix could not decrypt, the mesh CA step skips, and the tailscale
+# step prints the key with what to do and stops (tailscale_no_secret).
 AGE_PUB=
 age_key() {
   step "sops age key"
@@ -309,8 +316,20 @@ firewall() {
 # alone: the switch linked the nix unit over the .deb's but did not restart the
 # running daemon, and the bootstrap may itself be running over tailscale, so
 # the restart and the package removal stay a by-hand step (see that module).
+#
+# Login without a browser: the OAuth client secret tailscale_oauth (sops,
+# hosts/cloud-vm/mesh-ca.nix) as --auth-key, which the CLI exchanges for a
+# one-off, non-ephemeral, preauthorized key tagged tag:cloud-vm. It goes in as
+# file:<path> (the CLI reads the file, then parses the ?params), a root-only
+# file removed right after, so the secret never shows up in argv. A VM whose
+# age key is not a recipient yet has no decrypted secret: print what to do
+# and stop, the re-run pulls the re-encrypted file and the switch decrypts it.
+# --interactive-login keeps the old browser login instead.
 TS_STATE=unknown
 TS=$HOME/.nix-profile/bin/tailscale
+TS_SECRET=$HOME/.config/sops-nix/secrets/tailscale_oauth
+TS_TAG=tag:cloud-vm
+INTERACTIVE_LOGIN=0
 tailscale_up() {
   local host=$1
   step "tailscale"
@@ -325,34 +344,85 @@ tailscale_up() {
   fi
   systemctl -q is-active tailscaled ||
     warn "tailscaled is not active (systemctl status tailscaled)"
-  if "$TS" status >/dev/null 2>&1; then
-    info "already logged in"
-    if [ -n "$host" ]; then
-      sudo "$TS" set --hostname="$host" </dev/null
-      info "hostname set to $host"
-    fi
-    TS_STATE=up
-    return
-  fi
+  local state
+  state=$("$TS" status --json 2>/dev/null | jq -r '.BackendState // empty' || true)
+  case $state in
+    NeedsLogin | NoState | "") ;;
+    *)
+      info "already logged in (BackendState $state)"
+      [ "$state" = Running ] || warn "not running; bring it up with: sudo $TS up"
+      if [ -n "$host" ]; then
+        sudo "$TS" set --hostname="$host" </dev/null
+        info "hostname set to $host"
+      fi
+      TS_STATE=up
+      return
+      ;;
+  esac
   local args=(--ssh=false --timeout=10m)
   [ -n "$host" ] && args+=("--hostname=$host")
-  info "open the login URL below to add this machine (waits up to 10 min)"
-  if sudo "$TS" up "${args[@]}" </dev/null; then
+  if [ $INTERACTIVE_LOGIN = 1 ]; then
+    info "open the login URL below to add this machine (waits up to 10 min)"
+    if sudo "$TS" up "${args[@]}" </dev/null; then
+      TS_STATE=up
+    else
+      warn "tailscale up did not finish; re-run: sudo $TS up ${args[*]}"
+      TS_STATE=pending
+    fi
+    return
+  fi
+  if [ ! -s "$TS_SECRET" ]; then
+    tailscale_no_secret "$host"
+  fi
+  info "logging in as $TS_TAG with the OAuth secret (no browser)"
+  local f rc=0
+  f=$(sudo mktemp /run/tailscale-authkey.XXXXXX)
+  # mktemp makes it 0600 root; tee keeps that mode. printf is a builtin.
+  { tr -d '[:space:]' <"$TS_SECRET" && printf '?ephemeral=false&preauthorized=true'; } |
+    sudo tee "$f" >/dev/null
+  sudo "$TS" up "--auth-key=file:$f" "--advertise-tags=$TS_TAG" "${args[@]}" </dev/null || rc=$?
+  sudo rm -f "$f"
+  if [ $rc = 0 ]; then
     TS_STATE=up
   else
-    warn "tailscale up did not finish; re-run: sudo $TS up ${args[*]}"
+    warn "tailscale up with the OAuth secret failed (exit $rc); re-run the bootstrap,"
+    warn "or log in by browser: bootstrap --interactive-login${host:+ $host}"
     TS_STATE=pending
   fi
+}
+
+# No decrypted tailscale_oauth: this VM's age key is not a recipient of
+# secrets/cloud-vm.yaml yet (or sops-nix failed: systemctl --user status sops-nix).
+tailscale_no_secret() {
+  local n
+  n=$(grep -c '&cloud-vm-[0-9]' "$REPO_DIR/.sops.yaml" 2>/dev/null || true)
+  n=$((${n:-0} + 1))
+  warn "$TS_SECRET missing: this VM's age key cannot decrypt secrets/cloud-vm.yaml yet"
+  cat >&2 <<EOF
+
+    This VM's age public key:
+
+      $AGE_PUB
+
+    On the Mac, in nix-config:
+      1. .sops.yaml: add under keys
+           - &cloud-vm-$n $AGE_PUB
+         and add *cloud-vm-$n to the secrets/cloud-vm.yaml creation rule.
+      2. SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt nix run nixpkgs#sops -- updatekeys secrets/cloud-vm.yaml
+      3. commit and push.
+
+    Then re-run the bootstrap here (it pulls, decrypts and logs in), or
+    log in by browser instead: bootstrap --interactive-login${1:+ $1}
+EOF
+  die "stopped before tailscale login: re-run the bootstrap after the steps above"
 }
 
 summary() {
   local host=${1:-<tailscale-name>}
   step "Done. Left to do by hand:"
-  [ "$TS_STATE" = up ] || info "- finish the tailscale login: sudo $TS up --ssh=false${1:+ --hostname=$1}"
+  [ "$TS_STATE" = up ] || info "- finish the tailscale login: re-run the bootstrap, or add --interactive-login"
   info "- log out and back in for the zsh login shell"
   info "- on the Mac, enroll osewa: osewa login ubuntu@$host --no-install --name $host"
-  info "- sops: if new, add $AGE_PUB to .sops.yaml, run"
-  info "  sops updatekeys secrets/cloud-vm.yaml, push, pull here and switch"
   info "- per-account logins (gh, claude, codex, ...) and ssh keys"
   info "- moshi-hook pairing (users/common/moshi-hook.nix)"
   info "- herdr unit, when losing panes is fine: herdr server stop && systemctl --user start herdr-server"
@@ -377,6 +447,10 @@ main() {
         SM_CONFIG=cloud-vm-netbird
         shift
         ;;
+      --interactive-login)
+        INTERACTIVE_LOGIN=1
+        shift
+        ;;
       -*) die "unknown option $1 (see --help)" ;;
       *) break ;;
     esac
@@ -386,8 +460,8 @@ main() {
   sudo -n true 2>/dev/null || die "needs passwordless sudo"
   nix_root_profile
   nix_conf
-  clone_repo
   age_key
+  clone_repo
   hm_switch
   uidmap_pkg
   sm_switch

@@ -36,6 +36,9 @@
     age.keyFile = "${config.home.homeDirectory}/.config/sops/age/keys.txt";
     defaultSecretsMountPoint = "${config.xdg.stateHome}/sops-nix/secrets.d";
     secrets.mesh_root_ca = { };
+    # Tailscale OAuth client secret (scope auth_keys, tag:cloud-vm); the
+    # bootstrap's `tailscale up` mints a tagged auth key from it (./tailscale.nix).
+    secrets.tailscale_oauth.mode = "0400";
   };
 
   # Upstream's step, but a failed decrypt only warns (see the header), and it
