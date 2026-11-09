@@ -2,7 +2,7 @@
   enable = true;
   lfs.enable = true;
   settings = {
-    user.email = "gurinder@gmail.com";
+    user.email = "gurinderu@gmail.com";
     user.name = "Nick Pavlov";
   };
 }
