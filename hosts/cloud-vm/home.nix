@@ -14,13 +14,10 @@
     ../../users/common/moshi-hook.nix
     # Name herdr agent tabs after the agent's terminal title.
     ./herdr-tab-title.nix
-    # NetBird mesh client; the root-side systemd link is manual (see module).
+    # NetBird CLI; the daemon is system-manager's (./system/netbird.nix).
     ./netbird.nix
-    # Loopback accept ahead of tailscale's INPUT drop (NetBird DNS over lo);
-    # root-side link is manual (see module).
-    ./lo-accept.nix
-    # Fluence mesh root CA from sops into the system trust store; root-side
-    # link is manual (see module).
+    # Fluence mesh root CA decrypted by sops; system-manager's root units
+    # (./system/mesh-ca.nix) put it into the system trust store.
     ./mesh-ca.nix
     # osewa server (persistent terminals, next to mosh); enrollment, linger
     # and the firewall come from the bootstrap (see module).

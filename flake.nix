@@ -61,6 +61,12 @@
     # adds no nixpkgs lock node of its own.
     codex-cli-nix.url = "github:sadjow/codex-cli-nix";
     codex-cli-nix.inputs.nixpkgs.follows = "nixpkgs-unstable";
+    # system-manager (numtide): the root side of cloud-vm (systemConfigs.*,
+    # hosts/cloud-vm/system), i.e. the systemd units standalone home-manager
+    # cannot own. release-26.05 is the branch that accepts our nixpkgs (main
+    # refuses 26.05). Advance with `nix flake update system-manager`.
+    system-manager.url = "github:numtide/system-manager/release-26.05";
+    system-manager.inputs.nixpkgs.follows = "nixpkgs";
     # warpify: zellij plugin + CLI for binding clients to tabs. Provides
     # homeManagerModules.default, imported by hosts/cloud-vm/home.nix only.
     # Follows our nixpkgs/home-manager; the Rust toolchain comes from its
@@ -310,6 +316,17 @@
         inherit inputs nixpkgs home-manager;
       };
 
+      # Root side of cloud-vm (system-manager, hosts/cloud-vm/system):
+      # `cloud-vm` is the base every VM gets, `cloud-vm-netbird` adds the
+      # NetBird daemon (cloud-vm-1). Applied with
+      # `nix run .#system-manager -- switch --flake .#<name> --sudo`.
+      systemConfigs = import ./hosts/cloud-vm/system {
+        inherit inputs;
+        hmConfig = self.homeConfigurations."cloud-vm".config;
+      };
+      # The system-manager CLI at the locked rev, for the switch above.
+      packages.x86_64-linux.system-manager = inputs.system-manager.packages.x86_64-linux.default;
+
       # Eval coverage for cloud-vm, same shape and reasoning as mac-system-eval:
       # `nix flake check` does not evaluate homeConfigurations at all, and
       # building the activation package here would realise the whole closure.
@@ -318,6 +335,18 @@
           builtins.unsafeDiscardStringContext
             self.homeConfigurations."cloud-vm".activationPackage.drvPath;
       } ''printf '%s\n' "$activationDrv" > $out'';
+
+      # Same for both system-manager configs: flake check does not know
+      # systemConfigs either.
+      checks.x86_64-linux.cloud-vm-system-eval =
+        nixpkgs.legacyPackages.x86_64-linux.runCommand "cloud-vm-system-eval"
+          {
+            systemDrvs = map (n: builtins.unsafeDiscardStringContext self.systemConfigs.${n}.drvPath) [
+              "cloud-vm"
+              "cloud-vm-netbird"
+            ];
+          }
+          ''printf '%s\n' $systemDrvs > $out'';
 
       nixosConfigurations."thinkpad-x1-gen12" = import ./hosts/thinkpad-x1-gen12 {
         inherit
