@@ -310,6 +310,7 @@
       packages.x86_64-linux.bootstrap = import ./hosts/cloud-vm/bootstrap.nix {
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
         home-manager = home-manager.packages.x86_64-linux.home-manager;
+        system-manager = inputs.system-manager.packages.x86_64-linux.default;
       };
 
       homeConfigurations."cloud-vm" = import ./hosts/cloud-vm {

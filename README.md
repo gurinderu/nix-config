@@ -8,6 +8,7 @@ standalone home-manager on Ubuntu cloud VMs.
 | `mac_aarch64`       | Apple Silicon Mac               | `darwinConfigurations.mac_aarch64`          |
 | `thinkpad-x1-gen12` | ThinkPad X1 Gen 12              | `nixosConfigurations.thinkpad-x1-gen12`     |
 | `cloud-vm`          | x86_64 Ubuntu VM (cloud-vm-\*)  | `homeConfigurations.cloud-vm`               |
+|                     | its root side (system-manager)  | `systemConfigs.cloud-vm{,-netbird}`         |
 
 # Install
 
@@ -30,16 +31,18 @@ sudo NIX_CONFIG='experimental-features = nix-command flakes' nixos-rebuild switc
 Cloud VM (login user with passwordless sudo):
 
 ```
-nix --extra-experimental-features 'nix-command flakes' run github:gurinderu/nix-config#bootstrap -- <tailscale-hostname>
+nix --extra-experimental-features 'nix-command flakes' run github:gurinderu/nix-config#bootstrap -- [--netbird] <tailscale-hostname>
 ```
 
 The bootstrap (`hosts/cloud-vm/bootstrap.sh`, idempotent) roots the nix daemon
 in root's profile, writes `/etc/nix/nix.conf` (trusted caches), clones this
 repo to `~/projects/nix-config`, makes the sops age key, runs the first
-home-manager switch, sets zsh as login shell, sshd keepalive, linger, ufw
-(mosh and osewa on `tailscale0` only) and tailscale, then prints what is left
-by hand (tailscale login click, osewa enroll from the Mac, per-account
-logins).
+home-manager switch, installs apt `uidmap` (rootless podman), runs the
+system-manager switch (`systemConfigs.cloud-vm`, or `cloud-vm-netbird` with
+`--netbird` or when NetBird already runs), sets zsh as login shell, sshd
+keepalive, linger, ufw (mosh and osewa on `tailscale0` only) and tailscale,
+then prints what is left by hand (tailscale login click, osewa enroll from
+the Mac, per-account logins).
 
 On a bare VM, install Nix first:
 `sh <(curl -L https://nixos.org/nix/install) --daemon --yes`, then open a new
@@ -58,7 +61,11 @@ From the checkout:
 sudo darwin-rebuild switch --flake .#mac_aarch64
 sudo nixos-rebuild switch --flake .#thinkpad-x1-gen12
 home-manager switch --flake .#cloud-vm
+nix run .#system-manager -- switch --flake .#cloud-vm --sudo   # cloud-vm-netbird on cloud-vm-1
 ```
+
+system-manager's `activate` can exit 0 with a unit failed: check
+`systemctl --failed` after a switch.
 
 Over SSH riding the thinkpad's own network (tailscale through sing-box), a
 `switch` can drop the session halfway: use `sudo nixos-rebuild boot --flake

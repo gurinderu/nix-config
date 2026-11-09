@@ -1,6 +1,7 @@
-# Body of `nix run github:gurinderu/nix-config#bootstrap -- [tailscale-hostname]`
+# Body of `nix run github:gurinderu/nix-config#bootstrap -- [--netbird] [tailscale-hostname]`
 # (packaged by ./bootstrap.nix with writeShellApplication, which adds the
-# shebang, `set -euo pipefail`, PATH for the pinned tools and HOME_MANAGER).
+# shebang, `set -euo pipefail`, PATH for the pinned tools, HOME_MANAGER and
+# SYSTEM_MANAGER).
 # Sets up a fresh Ubuntu VM, whose login user has passwordless sudo and Nix
 # (multi-user) already installed, as the `cloud-vm` home-manager host.
 # Idempotent: every step checks before it acts, so re-running is safe.
@@ -16,13 +17,18 @@ REPO_DIR=$HOME/projects/nix-config
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap [tailscale-hostname]
+Usage: bootstrap [--netbird] [tailscale-hostname]
 
-Sets up this Ubuntu VM as the cloud-vm home-manager host: nix-daemon from
-root's profile, /etc/nix/nix.conf, ~/projects/nix-config checkout, first
-home-manager switch, zsh login shell, sshd keepalive, linger, ufw, tailscale.
+Sets up this Ubuntu VM as the cloud-vm host: nix-daemon from root's profile,
+/etc/nix/nix.conf, ~/projects/nix-config checkout, first home-manager
+switch, apt uidmap (rootless podman), system-manager switch, zsh login shell,
+sshd keepalive, linger, ufw, tailscale.
 Run as the login user with passwordless sudo, after installing Nix.
 Without a hostname, tailscale keeps the machine's own name.
+
+--netbird  apply systemConfigs.cloud-vm-netbird (adds the NetBird daemon)
+           instead of the base systemConfigs.cloud-vm. A VM that already
+           runs netbird.service keeps the netbird config without the flag.
 EOF
 }
 
@@ -172,6 +178,63 @@ hm_switch() {
   load_nix_env
 }
 
+# setuid newuidmap/newgidmap for rootless podman (hosts/cloud-vm/podman.nix);
+# nix cannot install setuid binaries on this host.
+uidmap_pkg() {
+  step "apt uidmap (rootless podman)"
+  if [ -u /usr/bin/newuidmap ] && [ -u /usr/bin/newgidmap ]; then
+    info "already installed"
+  else
+    sudo apt-get update -qq </dev/null
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq uidmap </dev/null
+    info "installed"
+  fi
+  if ! grep -q "^$USER:" /etc/subuid || ! grep -q "^$USER:" /etc/subgid; then
+    warn "$USER has no /etc/subuid or /etc/subgid range; rootless podman needs one"
+  fi
+}
+
+# Units from before system-manager: home-manager wrote them to
+# ~/.config/systemd-system and root linked them by hand. Unlink them so
+# system-manager can own the names. A running unit keeps running (no stop),
+# and the switch right after takes it over without a restart.
+LEGACY_UNITS=(netbird.service lo-accept.service mesh-ca.service mesh-ca.path)
+legacy_units() {
+  local u found=0
+  for u in "${LEGACY_UNITS[@]}"; do
+    case $(readlink "/etc/systemd/system/$u" 2>/dev/null) in
+      "$HOME"/.config/systemd-system/*)
+        found=1
+        sudo systemctl disable "$u"
+        [ ! -L "/etc/systemd/system/$u" ] || sudo rm -f "/etc/systemd/system/$u"
+        ;;
+    esac
+  done
+  if [ $found = 1 ]; then
+    sudo systemctl daemon-reload
+    info "unlinked the hand-linked units"
+  fi
+}
+
+# Root side (hosts/cloud-vm/system): systemConfigs.cloud-vm, or
+# cloud-vm-netbird with --netbird or on a VM already running netbird.service
+# (re-running without the flag must not drop the daemon).
+SM_CONFIG=cloud-vm
+sm_switch() {
+  if [ "$(systemctl show netbird -p ActiveState --value 2>/dev/null)" = active ]; then
+    SM_CONFIG=cloud-vm-netbird
+  fi
+  step "system-manager switch (#$SM_CONFIG)"
+  legacy_units
+  "$SYSTEM_MANAGER" switch --flake "$REPO_DIR#$SM_CONFIG" --sudo </dev/null
+  rm -f "${LEGACY_UNITS[@]/#/$HOME/.config/systemd-system/}"
+  rmdir "$HOME/.config/systemd-system" 2>/dev/null || true
+  # activate can exit 0 with a unit failed (system-manager#581).
+  local failed
+  failed=$(systemctl --failed --no-legend --plain | sed 's/ .*//')
+  [ -z "$failed" ] || warn "failed units: $failed (systemctl status <unit>)"
+}
+
 # Standalone home-manager can't change the login shell.
 login_shell() {
   step "login shell zsh"
@@ -279,24 +342,34 @@ summary() {
   info "- on the Mac, enroll osewa: osewa login ubuntu@$host --no-install --name $host"
   info "- sops: if new, add $AGE_PUB to .sops.yaml, run"
   info "  sops updatekeys secrets/cloud-vm.yaml, push, pull here and switch"
-  info "- mesh CA: sudo systemctl link ~/.config/systemd-system/mesh-ca.{service,path}"
-  info "  then: sudo systemctl enable --now mesh-ca.path mesh-ca.service"
   info "- per-account logins (gh, claude, codex, ...) and ssh keys"
   info "- moshi-hook pairing (users/common/moshi-hook.nix)"
   info "- herdr unit, when losing panes is fine: herdr server stop && systemctl --user start herdr-server"
   info "  (then autostart = true in hosts/cloud-vm/herdr-server.nix)"
-  info "- optional NetBird: one-time root steps in hosts/cloud-vm/netbird.nix"
+  if [ "$SM_CONFIG" = cloud-vm-netbird ]; then
+    info "- NetBird login if new: see hosts/cloud-vm/system/netbird.nix"
+  else
+    info "- optional NetBird: re-run with --netbird, then log in (hosts/cloud-vm/system/netbird.nix)"
+  fi
   info "Later switches: home-manager switch --flake $REPO_DIR#cloud-vm"
+  info "  and: nix run $REPO_DIR#system-manager -- switch --flake $REPO_DIR#$SM_CONFIG --sudo"
 }
 
 main() {
-  case ${1:-} in
-    -h | --help)
-      usage
-      return
-      ;;
-    -*) die "unknown option $1 (see --help)" ;;
-  esac
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -h | --help)
+        usage
+        return
+        ;;
+      --netbird)
+        SM_CONFIG=cloud-vm-netbird
+        shift
+        ;;
+      -*) die "unknown option $1 (see --help)" ;;
+      *) break ;;
+    esac
+  done
   local host=${1:-}
   [ "$(id -u)" != 0 ] || die "run as the login user (with passwordless sudo), not root"
   sudo -n true 2>/dev/null || die "needs passwordless sudo"
@@ -305,6 +378,8 @@ main() {
   clone_repo
   age_key
   hm_switch
+  uidmap_pkg
+  sm_switch
   login_shell
   sshd_keepalive
   linger
