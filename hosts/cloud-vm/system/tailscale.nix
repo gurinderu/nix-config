@@ -34,7 +34,8 @@
 # tailscale` afterwards: dpkg keeps it in state rc, and its postrm purge runs
 # `rm -rf /var/lib/tailscale` (the node key). A tailscaled restart puts its
 # ts-input jump above netbird's `-i wt0 -j ACCEPT` (see ./netbird.nix); on
-# cloud-vm-1 `sudo systemctl restart netbird` afterwards restores the order.
+# cloud-vm-1 ../lo-accept.nix re-runs with it and moves the wt0 accept back
+# above, no netbird restart needed.
 #
 # Roll back to apt: re-add the repo (https://pkgs.tailscale.com/stable/ubuntu,
 # or tailscale.com/install.sh), `apt-get install tailscale`, then

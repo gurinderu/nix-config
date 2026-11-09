@@ -71,8 +71,9 @@ nix run .#system-manager -- switch --flake .#cloud-vm --sudo   # cloud-vm-netbir
 
 system-manager's `activate` can exit 0 with a unit failed: check
 `systemctl --failed` after a switch. A switch that changes tailscaled's unit restarts
-it, which blips ssh/mosh over tailscale; on cloud-vm-1 restart netbird
-afterwards (`hosts/cloud-vm/system/tailscale.nix`).
+it, which blips ssh/mosh over tailscale; on cloud-vm-1 lo-accept then puts
+netbird's wt0 accept back above tailscale's ts-input jump
+(`hosts/cloud-vm/system/lo-accept.nix`).
 
 Over SSH riding the thinkpad's own network (tailscale through sing-box), a
 `switch` can drop the session halfway: use `sudo nixos-rebuild boot --flake

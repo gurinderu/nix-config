@@ -29,12 +29,12 @@
 # tailscale's ts-input chain drops 100.64.0.0/10 sources arriving on any
 # interface but tailscale0, but netbird inserts its own `-i wt0 -j ACCEPT` as
 # the first INPUT rule, ahead of the ts-input jump, so wt0 traffic gets
-# through. A tailscaled restart re-inserts the ts-input jump at the top, which
-# leaves the wt0 accept below it until netbird restarts. Separately, the
+# through. A tailscaled restart re-inserts the ts-input jump at the top;
+# ./lo-accept.nix then moves the wt0 accept back above it. Separately, the
 # host's own DNS queries to netbird's resolver arrive on lo (not wt0) with a
-# 100.64.0.0/10 source, so ./lo-accept.nix keeps `-i lo -j ACCEPT` first and
-# re-asserts it after every tailscaled/netbird (re)start; check with `sudo
-# iptables -S INPUT`. Don't use `tailscale set --netfilter-mode=nodivert`: it
+# 100.64.0.0/10 source, so ./lo-accept.nix keeps `-i lo -j ACCEPT` first. It
+# re-asserts lo, wt0, ts-input after every tailscaled/netbird (re)start; check
+# with `sudo iptables -S INPUT`. Don't use `tailscale set --netfilter-mode=nodivert`: it
 # also drops the ts-postrouting masquerade the exit-node offer needs. Routes
 # don't clash: tailscale only installs /32s for its own peers (table 52), so
 # netbird's subnet route via wt0 loses only on an address both meshes hand out.
