@@ -74,29 +74,36 @@ let
   # user-controlled value could inject arbitrary fields).
   ageKeyFile = config.home-manager.users.gurinderu.sops.age.keyFile;
 
-  # One substitution spec per (server, field). Each becomes a
-  # `subst <token> <secretKey> <mode>` line the render loop consumes; mode
-  # "port" strips the surrounding quotes so the port stays a JSON number, mode
-  # "str" is a plain token replacement.
-  specLines = lib.concatLists (
-    map (
-      n:
-      lib.mapAttrsToList (
-        field: stem:
-        let
-          isPort = field == "server_port";
-          token =
-            if isPort then
-              ''"server_port":"SING_BOX_PORT_${toString n}"''
-            else
-              "SING_BOX_${stem}_${toString n}";
-        in
-        "subst ${lib.escapeShellArg token} ${lib.escapeShellArg (secrets.secretName n field)} ${
-          if isPort then "port" else "str"
-        }"
-      ) secrets.fields
-    ) secrets.servers
-  );
+  # One substitution spec per (server, field), plus one per global secret.
+  # Each becomes a `subst <token> <secretKey> <mode>` line the render loop
+  # consumes; mode "port" strips the surrounding quotes so the port stays a
+  # JSON number, mode "str" is a plain token replacement.
+  specLines =
+    lib.concatLists (
+      map (
+        n:
+        lib.mapAttrsToList (
+          field: stem:
+          let
+            isPort = field == "server_port";
+            token =
+              if isPort then
+                ''"server_port":"SING_BOX_PORT_${toString n}"''
+              else
+                "SING_BOX_${stem}_${toString n}";
+          in
+          "subst ${lib.escapeShellArg token} ${lib.escapeShellArg (secrets.secretName n field)} ${
+            if isPort then "port" else "str"
+          }"
+        ) secrets.fields
+      ) secrets.servers
+    )
+    # Global (non-per-server) secrets: plain token replacements, so a token
+    # inside a larger string ("SING_BOX_HEADSCALE_IP/32") is substituted too.
+    ++ lib.mapAttrsToList (
+      key: stem:
+      "subst ${lib.escapeShellArg (secrets.globalToken stem)} ${lib.escapeShellArg (secrets.globalSecretName key)} str"
+    ) secrets.globals;
 
   # Render, validate and atomically install ${configPath}. Runs as root from
   # preActivation (below), i.e. BEFORE the launchd step reloads the sing-box

@@ -10,7 +10,14 @@ let
 
   # Single source of truth for backend servers, fields and tokens (shared with
   # the macOS path so the two can never drift).
-  inherit (import ../../users/gurinderu/sing-box-secrets.nix) servers fields secretName;
+  inherit (import ../../users/gurinderu/sing-box-secrets.nix)
+    servers
+    fields
+    secretName
+    globals
+    globalSecretName
+    globalToken
+    ;
   sopsFiles = import ../../secrets;
 
   # from/to pairs for builtins.replaceStrings. Index-suffixed tokens mean no
@@ -35,7 +42,13 @@ let
           to = ph field;
         }
     ) fields;
-  subs = builtins.concatMap subsFor servers;
+  # Global (non-per-server) secrets: plain token replacements; replaceStrings
+  # also hits a token inside a larger string ("SING_BOX_HEADSCALE_IP/32").
+  globalSubs = lib.mapAttrsToList (key: stem: {
+    from = globalToken stem;
+    to = config.sops.placeholder.${globalSecretName key};
+  }) globals;
+  subs = builtins.concatMap subsFor servers ++ globalSubs;
 
   # Wait for the old sing-box to release its bbolt exclusive lock on cache.db
   # before starting a new instance. Without this, a Restart=on-failure cycle
@@ -138,6 +151,10 @@ in
           value.sopsFile = sopsFiles.shared;
         }) (builtins.attrNames fields)
       ) servers
+      ++ map (key: {
+        name = globalSecretName key;
+        value.sopsFile = sopsFiles.shared;
+      }) (builtins.attrNames globals)
     );
 
     # Render the full config into a root-only file under /run/secrets/rendered,

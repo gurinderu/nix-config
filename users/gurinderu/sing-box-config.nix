@@ -384,8 +384,10 @@ in
         # here) must resolve to a REAL IP, never a fakeip: the network
         # extension sends to the fakeip outside the TUN, so nothing reaches the
         # server and login hangs at "authentication in progress" (measured
-        # 2026-10-26: dig SING_BOX_HEADSCALE_DOMAIN returned a fakeip). `local` for the same
-        # reasons as the tailscale.com rule above.
+        # 2026-10-26: dig of the control-plane hostname returned a fakeip).
+        # `local` for the same reasons as the tailscale.com rule above. The
+        # hostname is a sops secret (sing_box_headscale_domain, see
+        # ./sing-box-secrets.nix): this repo is public.
         domain = [ "SING_BOX_HEADSCALE_DOMAIN" ];
         server = "local";
       }
@@ -686,7 +688,9 @@ in
           # ip_cidr (ORed with domain by sing-box) catches connections to the
           # A record with no sniffable name. If the direct path to it ever
           # degrades, `vless-main` is the alternative, as with the NetBird
-          # control-plane exception in ./sing-box-config-darwin.nix.
+          # control-plane exception in ./sing-box-config-darwin.nix. Hostname
+          # and address are sops secrets (sing_box_headscale_domain/_ip, see
+          # ./sing-box-secrets.nix); the IP secret is bare, /32 is added here.
           domain = [ "SING_BOX_HEADSCALE_DOMAIN" ];
           ip_cidr = [ "SING_BOX_HEADSCALE_IP/32" ];
           outbound = "direct-out";

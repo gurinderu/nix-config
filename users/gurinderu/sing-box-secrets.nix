@@ -1,5 +1,6 @@
-# Single source of truth for the per-server VLESS secret fields and their
-# placeholder tokens. Shared by BOTH substitution paths so they can never drift:
+# Single source of truth for the sing-box secret fields (per-server VLESS ones
+# plus a few global ones) and their placeholder tokens. Shared by BOTH
+# substitution paths so they can never drift:
 #   - macOS  (hosts/mac_aarch64/sing-box.nix): sed over decrypted sops values,
 #     run as root at system activation (preActivation).
 #   - NixOS  (hosts/thinkpad-x1-gen12/sing-box.nix): sops.templates +
@@ -58,4 +59,20 @@
   };
 
   secretName = n: f: "sing_box_vless_${toString n}_${f}";
+
+  # Non-per-server secrets: sops key suffix -> placeholder token stem. Each is
+  # the sops key sing_box_<key> and the token SING_BOX_<STEM>, substituted as a
+  # plain string (also inside a larger string, e.g. "SING_BOX_HEADSCALE_IP/32")
+  # by both call sites. Keep these stems free of a trailing _<digit> and never a
+  # prefix of a per-server stem above (or vice versa), so no token is a prefix
+  # of another. The values live only in sops because this repo is public:
+  #   headscale_domain: the self-hosted headscale control plane's hostname.
+  #   headscale_ip:     its A record, a bare address (no /32; the config adds it).
+  globals = {
+    headscale_domain = "HEADSCALE_DOMAIN";
+    headscale_ip = "HEADSCALE_IP";
+  };
+
+  globalSecretName = f: "sing_box_${f}";
+  globalToken = stem: "SING_BOX_${stem}";
 }
