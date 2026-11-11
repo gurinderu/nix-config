@@ -23,7 +23,7 @@
 # home-manager links at the same path (and runs a second daemon on darwin).
 # The same clash for osewa: when the phone enrolls in osewa while no osewa
 # server runs, moshi-hook may run `osewa service install` itself, so
-# hosts/cloud-vm/osewa.nix keeps the server up (Restart=always).
+# users/common/osewa-server.nix keeps the server up (Restart=always).
 #
 # The unit mirrors upstream's own (`service install` template: Type=simple,
 # `serve`, Restart=on-failure, RestartSec=5, WorkingDirectory=%h), except PATH:

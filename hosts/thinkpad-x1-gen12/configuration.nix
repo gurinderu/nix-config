@@ -15,6 +15,9 @@
     ./sing-box.nix
     ./github-runner.nix
     ./local-agents.nix
+    # osewa server for 0xff (persistent terminals, next to mosh), its
+    # linger and its tailnet-only ports.
+    ./osewa.nix
   ];
 
   nix.settings.experimental-features = [

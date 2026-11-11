@@ -134,8 +134,8 @@
           { };
 
       # osewa (persistent remote terminals) — repack of upstream's release
-      # binaries at one version for both ends: the server on cloud-vm
-      # (hosts/cloud-vm/osewa.nix), the client on the Mac
+      # binaries at one version for both ends: the servers on cloud-vm and the
+      # thinkpad (users/common/osewa-server.nix), the client on the Mac
       # (users/gurinderu/osewa.nix). Exposed so `nix build .#osewa` and
       # `nix run .#osewa.updateScript` work.
       packages.aarch64-darwin.osewa = nixpkgs.legacyPackages.aarch64-darwin.callPackage ./pkgs/osewa { };
