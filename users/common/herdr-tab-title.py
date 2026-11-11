@@ -1,6 +1,6 @@
 """herdr hook: name tabs after what their Claude Code / Codex agent is doing.
 
-Runs from the herdr-tab-title plugin (hosts/cloud-vm/herdr-tab-title.nix) on
+Runs from the herdr-tab-title plugin (users/common/herdr-tab-title.nix) on
 agent and focus events (one tab: the event's) and on `startup` (every tab). A tab is renamed to its agent pane's terminal title
 (spinner already stripped by herdr), trimmed to MAX_LEN, but only while the
 tab still carries herdr's default numeric label or the label this hook set

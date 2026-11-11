@@ -13,7 +13,8 @@
   initContent = pkgs.lib.mkMerge [
     # mosh sessions land in a persistent multiplexer session, and leaving it
     # ends the mosh session: herdr's default session where herdr is installed
-    # (cloud-vm, so the Moshi app can follow agents by their herdr pane),
+    # (cloud-vm and the thinkpad, via users/common/herdr.nix; on cloud-vm the
+    # Moshi app follows agents by their herdr pane),
     # otherwise the zellij session `main`. `herdr` alone attaches to the
     # default session or starts it. mosh-server sets no env var of its own, so
     # detect it as the shell's parent (`comm` is a bare name on Linux, a full
@@ -24,7 +25,8 @@
     # see hosts/cloud-vm/home.nix) when one exists. HERDR_ENV guards against
     # nesting: herdr panes keep the env the server started with. mkBefore
     # runs this ahead of oh-my-zsh, which would be thrown away by the exec
-    # anyway. Plain ssh and local shells are untouched; home-manager's
+    # anyway. Plain ssh logins attach to herdr in users/common/herdr.nix,
+    # where imported; local shells are untouched. home-manager's
     # programs.zellij zsh integration stays off, since it would auto-start
     # zellij in every shell.
     (pkgs.lib.mkBefore ''
@@ -40,11 +42,14 @@
         fi
       fi
     '')
-    ''
+    # Order 990: first among the default-order (1000) init snippets, ahead
+    # of the herdr ssh attach (995, users/common/herdr.nix) and of
+    # home-manager's starship/direnv hooks, independent of module order.
+    (pkgs.lib.mkOrder 990 ''
       if [[ $TERM_PROGRAM != "WarpTerminal" ]]; then
         source ${pkgs.zsh-autosuggestions}/share/zsh-autosuggestions/zsh-autosuggestions.zsh
       fi
-    ''
+    '')
   ];
   history = {
     extended = true;

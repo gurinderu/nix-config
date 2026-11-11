@@ -7,8 +7,9 @@
 # What is cloud-vm's own lives outside nix: lingering for the user service
 # (`sudo loginctl enable-linger ubuntu`) and the ufw rules that keep 7322
 # TCP+UDP to tailscale0, both done by the bootstrap
-# (hosts/cloud-vm/bootstrap.nix). Sessions carry no SSH_CONNECTION, so the
-# zellij auto-attach in home.nix stays out of them.
+# (hosts/cloud-vm/bootstrap.nix). osewa sets SSH_CONNECTION (ending in port
+# 7322) for its sessions, so they attach to herdr like ssh and mosh logins
+# (users/common/herdr.nix).
 {
   imports = [ ../../users/common/osewa-server.nix ];
 }

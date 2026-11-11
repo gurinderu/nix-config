@@ -426,7 +426,7 @@ summary() {
   info "- per-account logins (gh, claude, codex, ...) and ssh keys"
   info "- moshi-hook pairing (users/common/moshi-hook.nix)"
   info "- herdr unit, when losing panes is fine: herdr server stop && systemctl --user start herdr-server"
-  info "  (then autostart = true in hosts/cloud-vm/herdr-server.nix)"
+  info "  (then herdrServer.autostart = true in hosts/cloud-vm/home.nix)"
   if [ "$SM_CONFIG" = cloud-vm-netbird ]; then
     info "- NetBird login if new: see hosts/cloud-vm/system/netbird.nix"
   else

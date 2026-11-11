@@ -22,6 +22,11 @@
 # re-trigger it. One `herdr api snapshot` per event, a rename only when the
 # label changes. Startup hooks do not run on link; to backfill by hand run
 # `herdr-tab-title-hook --all`.
+#
+# The manifest's first comment line still names hosts/cloud-vm/, where this
+# module lived until it moved here for the thinkpad: changing the text would
+# change the manifest's store path and make every host relink the plugin for
+# nothing.
 {
   config,
   inputs,

@@ -1,4 +1,4 @@
-# Activation step for the herdr plugins on cloud-vm (./herdr-tab-title.nix):
+# Activation step for the herdr plugins (./herdr-tab-title.nix):
 # link the plugin directory into herdr, relinking only when the registered
 # manifest_path differs from the current manifest (see the herdr-tab-title.nix
 # header for why that comparison is the right trigger).

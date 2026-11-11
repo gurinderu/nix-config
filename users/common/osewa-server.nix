@@ -53,8 +53,10 @@
 # State: keys and enrolled devices in ~/.config/osewa (server.key, devices,
 # settings.json), holder sockets and the server lock in
 # $XDG_RUNTIME_DIR/osewa, the update cache in ~/.local/state/osewa. Sessions
-# run the passwd login shell (zsh -l) with a clean environment; they carry no
-# SSH_CONNECTION, so a zellij auto-attach keyed on it stays out of them.
+# run the passwd login shell (zsh -l) with a clean environment, except that
+# osewa sets SSH_CONNECTION/SSH_CLIENT/SSH_TTY itself (SSH_CONNECTION ends in
+# the server port, 7322). Interactive sessions therefore attach to herdr like
+# ssh and mosh logins, where the host imports users/common/herdr.nix.
 {
   lib,
   pkgs,

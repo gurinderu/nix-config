@@ -18,6 +18,9 @@
     # osewa server for 0xff (persistent terminals, next to mosh), its
     # linger and its tailnet-only ports.
     ./osewa.nix
+    # herdr for 0xff, as on cloud-vm: ssh, mosh and osewa logins attach to
+    # it; memory-capped server unit and tab-title plugin.
+    ./herdr.nix
   ];
 
   nix.settings.experimental-features = [

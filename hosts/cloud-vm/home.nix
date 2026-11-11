@@ -12,8 +12,10 @@
     ../../users/common/home.nix
     # Moshi iOS app bridge daemon; pairing/hook install stay manual (see module).
     ../../users/common/moshi-hook.nix
-    # Name herdr agent tabs after the agent's terminal title.
-    ./herdr-tab-title.nix
+    # herdr: the herdr package, ssh/osewa logins attach to it, its
+    # memory-capped server unit (defined, not yet started: herdrServer below)
+    # and the tab-title plugin.
+    ../../users/common/herdr.nix
     # NetBird CLI; the daemon is system-manager's (./system/netbird.nix).
     ./netbird.nix
     # tailscale CLI; the daemon is system-manager's (./system/tailscale.nix).
@@ -27,9 +29,6 @@
     # osewa server (persistent terminals, next to mosh); enrollment, linger
     # and the firewall come from the bootstrap (see module).
     ./osewa.nix
-    # Memory-capped systemd unit for the herdr server; defined, not yet
-    # started (cutover steps in the module).
-    ./herdr-server.nix
     # Disabled for now, together with the warpify flake input.
     # inputs.warpify.homeManagerModules.default
   ];
@@ -48,21 +47,18 @@
   home = {
     # Claude Code from github:ryoppippi/nix-claude-code (see the flake input).
     # From numtide's llm-agents.nix: clauth (multi-account manager / usage
-    # monitor), codegraph (semantic code-intelligence MCP for agents) and
-    # herdr (agent-aware terminal multiplexer; not in our stable nixpkgs),
+    # monitor) and codegraph (semantic code-intelligence MCP for agents),
     # plus the opencode and pi coding agents (for testing craft's review
     # delivery in them; logins are done by hand). llm-agents keeps the 1.x
     # line as `opencode` and ships 2.x as `opencode2` with a bin/opencode2, so
     # 2.x is linked in under the usual `opencode` name.
-    # mosh logins attach to herdr (see users/common/zsh.nix), and the
-    # moshi-hook daemon finds it on ~/.nix-profile/bin to follow agents by
-    # their herdr pane.
+    # herdr comes from users/common/herdr.nix; the moshi-hook daemon finds it
+    # on ~/.nix-profile/bin to follow agents by their herdr pane.
     packages = [
       inputs.nix-claude-code.packages.${pkgs.stdenv.hostPlatform.system}.claude
       inputs.codex-cli-nix.packages.${pkgs.stdenv.hostPlatform.system}.default
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.clauth
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.codegraph
-      inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.herdr
       (
         let
           opencode2 = inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.opencode2;
@@ -84,18 +80,10 @@
   # users/common/home.nix) stays off.
   programs.zellij.enable = lib.mkForce false;
 
-  # Interactive ssh logins land in herdr's default session (`herdr` alone
-  # attaches to it or starts it), with the full UI: a dropped connection
-  # reattaches to the same panes on the next login, and leaving herdr (detach
-  # or exit) closes the ssh shell too. Skipped inside herdr (whose panes
-  # inherit SSH_CONNECTION from the login that started its server), for
-  # `ssh host cmd` (not interactive, so .zshrc never runs) and on dumb
-  # terminals. If herdr itself fails, the plain shell stays as a fallback.
-  programs.zsh.initContent = ''
-    if [[ -n $SSH_CONNECTION && -z $HERDR_ENV && $TERM != dumb ]]; then
-      herdr && exit
-    fi
-  '';
+  # The herdr server unit stays at users/common/herdr-server.nix's defaults,
+  # which are this host's: autostart off until the cutover described there,
+  # 20G/24G caps on the 29G VM, the ~/.nix-profile PATH and desktop.toml.
+  herdrServer.autostart = false;
 
   # herdr UI for the desktop: the plain mosh login from the Mac loads this
   # file via HERDR_CONFIG_PATH (users/common/zsh.nix), so Warp shows only the
