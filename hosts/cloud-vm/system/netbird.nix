@@ -1,7 +1,7 @@
 # NetBird client daemon on cloud-vm — the same self-hosted mesh as the Mac
-# (hosts/mac_aarch64/netbird.nix; control plane SING_BOX_NETBIRD_MGMT_DOMAIN, SSO via
-# SING_BOX_IDP_DOMAIN), from the same pkgs/netbird at the same version as
-# the CLI that ../netbird.nix puts on the user's PATH. Linux side is CLI +
+# (hosts/mac_aarch64/netbird.nix; the control plane URL is kept in sops / in
+# the daemon state, not in this public repo), from the same pkgs/netbird at
+# the same version as the CLI that ../netbird.nix puts on the user's PATH. Linux side is CLI +
 # daemon only. The Mac's sing-box routing workarounds (NB_DISABLE_CUSTOM_ROUTING,
 # the TUN wait) are RU-network specific and do not apply here. Only in the
 # cloud-vm-netbird system config.
@@ -10,13 +10,14 @@
 # First login on a new VM, after the system-manager switch:
 #
 #   netbird status    # Daemon status: NeedsLogin
-#   sudo ~/.nix-profile/bin/netbird up --management-url <managementUrl> --no-browser
+#   sudo ~/.nix-profile/bin/netbird up --management-url <control plane URL> --no-browser
 #
 # sudo's secure_path lacks the nix profile, hence the full path (plain `sudo
 # netbird` fails with "No such file or directory"); non-root `netbird status`
-# works as is. The first `up` needs --management-url (see managementUrl
-# below); it saves the URL to /var/lib/netbird/default.json, so later `up`
-# calls can leave it out. `--no-browser` prints a device-code login link (valid
+# works as is. The first `up` needs --management-url (the control plane URL,
+# kept in sops / in the daemon state); it saves the URL to
+# /var/lib/netbird/default.json, so later `up` calls and every daemon start
+# take it from there. `--no-browser` prints a device-code login link (valid
 # 10 min); `up --setup-key <key>` is the alternative. State is in
 # /var/lib/netbird, the log in /var/log/netbird/client.log (plus `journalctl
 # -u netbird`).
@@ -46,17 +47,14 @@
 }:
 let
   netbird = pkgs.callPackage ../../../pkgs/netbird { };
-
-  # Passed to `service run` as on the Mac, but on 0.75.1 that does NOT seed a
-  # fresh profile: the first /var/lib/netbird/default.json is written with
-  # api.netbird.io (measured 2026-11-03). The first login must therefore be
-  # `sudo ~/.nix-profile/bin/netbird up --management-url <this>`, which
-  # persists it.
-  managementUrl = "https://SING_BOX_NETBIRD_MGMT_DOMAIN:443";
 in
 {
+  # No --management-url on `service run`: on 0.75.1 it does NOT seed a fresh
+  # profile (the first /var/lib/netbird/default.json is written with
+  # api.netbird.io, measured 2026-11-03), and once `netbird up
+  # --management-url` has persisted the URL the daemon reads it from there.
   systemd.services.netbird = {
-    description = "NetBird mesh client (SING_BOX_NETBIRD_MGMT_DOMAIN)";
+    description = "NetBird mesh client";
     documentation = [ "https://docs.netbird.io" ];
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
@@ -67,7 +65,7 @@ in
     # netbird rotates and gzips client.log itself. Stdout/stderr (panics,
     # pre-logger startup errors) still land in `journalctl -u netbird`.
     serviceConfig = {
-      ExecStart = "${netbird}/bin/netbird service run --log-level info --daemon-addr unix:///var/run/netbird.sock --log-file /var/log/netbird/client.log --management-url ${managementUrl}";
+      ExecStart = "${netbird}/bin/netbird service run --log-level info --daemon-addr unix:///var/run/netbird.sock --log-file /var/log/netbird/client.log";
       StateDirectory = "netbird";
       StateDirectoryMode = "0700";
       LogsDirectory = "netbird";

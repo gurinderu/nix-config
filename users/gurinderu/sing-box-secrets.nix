@@ -73,6 +73,20 @@
     headscale_ip = "HEADSCALE_IP";
   };
 
+  # Same as `globals`, but used by the macOS config only
+  # (users/gurinderu/sing-box-config-darwin.nix), so only the macOS renderer
+  # requires these keys; the thinkpad neither declares nor substitutes them.
+  # Same token rules as `globals` (no stem is a prefix of another, here or
+  # above). Values in sops because this repo is public:
+  #   netbird_mgmt_domain:  the NetBird control plane (management/signal) host.
+  #   netbird_relay_domain: its relay host.
+  #   idp_domain:           the IdP host the NetBird SSO logs in against.
+  darwinGlobals = {
+    netbird_mgmt_domain = "NETBIRD_MGMT_DOMAIN";
+    netbird_relay_domain = "NETBIRD_RELAY_DOMAIN";
+    idp_domain = "IDP_DOMAIN";
+  };
+
   globalSecretName = f: "sing_box_${f}";
   globalToken = stem: "SING_BOX_${stem}";
 }

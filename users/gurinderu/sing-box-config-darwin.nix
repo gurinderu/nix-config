@@ -51,10 +51,10 @@ import ./sing-box-config.nix {
       # that management dial hits its 30s deadline and retries forever, so the
       # peer never registers and `netbird up` appears to hang.
       #
-      # The IdP host (SING_BOX_IDP_DOMAIN) is included for the same reason:
+      # The IdP host (sops sing_box_idp_domain) is included for the same reason:
       # the daemon itself does the SSO token exchange and OIDC discovery, and on
       # 2026-10-30 its PKCE token POST timed out on the direct path (TLS
-      # handshake timeout / unexpected EOF, never reaching authentik), leaving
+      # handshake timeout / unexpected EOF, never reaching the IdP), leaving
       # `netbird up` stuck in LoginFailed while the browser, via `final`, worked.
       #
       # Scope is deliberately narrow: the WireGuard peer and relay traffic is
@@ -66,6 +66,9 @@ import ./sing-box-config.nix {
         "netbird"
         "netbird-ui"
       ];
+      # Hostnames are sops secrets (sing_box_netbird_mgmt_domain,
+      # sing_box_netbird_relay_domain, sing_box_idp_domain; see darwinGlobals
+      # in ./sing-box-secrets.nix), substituted at render time.
       domain = [
         "SING_BOX_NETBIRD_MGMT_DOMAIN"
         "SING_BOX_NETBIRD_RELAY_DOMAIN"
@@ -121,7 +124,7 @@ import ./sing-box-config.nix {
       # daemon's that falls through to the process_name direct-out bypass.
       # (Back when the control plane itself went direct-out, a fakeip left
       # the peer unregistered — measured 2026-07-29
-      # before this rule existed: SING_BOX_NETBIRD_RELAY_DOMAIN -> 198.18.2.192,
+      # before this rule existed: the relay host -> 198.18.2.192,
       # a fakeip — and the same answer came back even for an explicit
       # `dig @77.88.8.8`, since the DNS listener hijacks those too.)
       #
@@ -146,7 +149,7 @@ import ./sing-box-config.nix {
     }
     {
       # The NetBird dashboard (a public page) fetches the IdP discovery document
-      # from SING_BOX_IDP_DOMAIN. A fakeip answer lands in 172.24.0.0/14 —
+      # from the IdP host. A fakeip answer lands in 172.24.0.0/14 —
       # private space — and Chrome's Local Network Access then blocks that
       # public-to-local fetch ("Permission was denied for this request to access
       # the `local` address space"), so the dashboard fails with

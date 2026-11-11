@@ -1,7 +1,7 @@
 # NetBird client — WireGuard overlay mesh against a self-hosted control plane
-# (SING_BOX_NETBIRD_MGMT_DOMAIN). The package is a repack of upstream's macOS
-# release artifacts; see pkgs/netbird/default.nix for why it is not taken from
-# nixpkgs.
+# (the control plane URL is kept in the daemon state, see below). The package
+# is a repack of upstream's macOS release artifacts; see
+# pkgs/netbird/default.nix for why it is not taken from nixpkgs.
 #
 # Why a *daemon* (system, root) rather than a per-user agent: like sing-box, the
 # client creates a utun interface and installs routes, which an agent running as
@@ -54,9 +54,13 @@ let
   # entry (unlike the sing-box/net-observer logs in ./sing-box.nix).
   logDir = "/var/log/netbird";
 
-  # Self-hosted control plane. Kept in sync with the control-plane rule in
+  # Self-hosted control plane: its URL is NOT in this repo (it is public). It
+  # lives in the daemon state, /var/lib/netbird/default.json, written by the
+  # first `sudo netbird up --management-url <url>`; `service run --management-url`
+  # never seeded a profile anyway (measured on cloud-vm, 0.75.1), so the flag
+  # is no longer passed here. Its hostnames, for the control-plane rule in
   # users/gurinderu/sing-box-config-darwin.nix (which also proxies the daemon's
-  # SSO calls to the IdP, SING_BOX_IDP_DOMAIN). NB the routing story INVERTED
+  # SSO calls to the IdP), are kept in sops. NB the routing story INVERTED
   # since the original 2026-07-29 note claimed a direct-out bypass was needed
   # for registration: the direct path to this host from the RU network is the
   # one that stalls (TLS completes, nothing returns), so the rule now sends
@@ -64,7 +68,6 @@ let
   # why the start script below waits for the sing-box TUN, and why
   # NB_DISABLE_CUSTOM_ROUTING keeps netbird's own sockets on the normal
   # route table instead of binding past the TUN.
-  managementUrl = "https://SING_BOX_NETBIRD_MGMT_DOMAIN:443";
 
   start = pkgs.writeShellScript "netbird-start" ''
     mkdir -p ${stateDir} ${logDir}
@@ -112,8 +115,7 @@ let
     exec ${netbird}/bin/netbird service run \
       --log-level info \
       --daemon-addr unix:///var/run/netbird.sock \
-      --log-file ${logDir}/client.log \
-      --management-url ${managementUrl}
+      --log-file ${logDir}/client.log
   '';
 in
 {

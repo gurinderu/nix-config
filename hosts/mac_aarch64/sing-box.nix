@@ -74,7 +74,8 @@ let
   # user-controlled value could inject arbitrary fields).
   ageKeyFile = config.home-manager.users.gurinderu.sops.age.keyFile;
 
-  # One substitution spec per (server, field), plus one per global secret.
+  # One substitution spec per (server, field), plus one per global secret
+  # (the shared `globals` and the macOS-only `darwinGlobals`).
   # Each becomes a `subst <token> <secretKey> <mode>` line the render loop
   # consumes; mode "port" strips the surrounding quotes so the port stays a
   # JSON number, mode "str" is a plain token replacement.
@@ -103,7 +104,7 @@ let
     ++ lib.mapAttrsToList (
       key: stem:
       "subst ${lib.escapeShellArg (secrets.globalToken stem)} ${lib.escapeShellArg (secrets.globalSecretName key)} str"
-    ) secrets.globals;
+    ) (secrets.globals // secrets.darwinGlobals);
 
   # Render, validate and atomically install ${configPath}. Runs as root from
   # preActivation (below), i.e. BEFORE the launchd step reloads the sing-box
