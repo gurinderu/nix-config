@@ -49,7 +49,9 @@
     # Claude Code from github:ryoppippi/nix-claude-code (see the flake input).
     # From numtide's llm-agents.nix: clauth (multi-account manager / usage
     # monitor), codegraph (semantic code-intelligence MCP for agents) and
-    # herdr (agent-aware terminal multiplexer; not in our stable nixpkgs).
+    # herdr (agent-aware terminal multiplexer; not in our stable nixpkgs),
+    # plus the opencode and pi coding agents (for testing craft's review
+    # delivery in them; logins are done by hand).
     # mosh logins attach to herdr (see users/common/zsh.nix), and the
     # moshi-hook daemon finds it on ~/.nix-profile/bin to follow agents by
     # their herdr pane.
@@ -59,6 +61,8 @@
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.clauth
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.codegraph
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.herdr
+      inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.opencode
+      inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.pi
     ];
 
     # Default login user on Ubuntu cloud images.
