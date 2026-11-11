@@ -75,9 +75,16 @@ it, which blips ssh/mosh over tailscale; on cloud-vm-1 lo-accept then puts
 netbird's wt0 accept back above tailscale's ts-input jump
 (`hosts/cloud-vm/system/lo-accept.nix`).
 
-Over SSH riding the thinkpad's own network (tailscale through sing-box), a
-`switch` can drop the session halfway: use `sudo nixos-rebuild boot --flake
-.#thinkpad-x1-gen12 && sudo reboot`, or run it inside tmux.
+Over SSH into the thinkpad (tailscale through sing-box), switch with
+`safe-switch` from the checkout instead of `nixos-rebuild switch`: it builds
+as you, arms a 5-minute rollback, then activates in a detached root unit, so
+a dropped session cannot cut the switch short. Log back in if needed, check
+with `safe-switch --status`, and keep the new generation with
+`safe-switch --confirm` within the 5 minutes, or it rolls back by itself.
+`safe-switch <flake-ref>` builds another ref (default `.#thinkpad-x1-gen12`).
+Details: `hosts/thinkpad-x1-gen12/safe-switch.nix`. Before the first
+generation that has it is running, call it from the new build:
+`$(nix build --no-link --print-out-paths .#nixosConfigurations.thinkpad-x1-gen12.config.system.build.toplevel)/sw/bin/safe-switch`.
 
 # Secrets
 

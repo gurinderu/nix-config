@@ -262,6 +262,12 @@ in
     # otherwise restart the unit — sing-box would keep running the old routes. Tie the
     # restart to the config structure (routes, DNS, excludes) so a rebuild reloads it.
     restartTriggers = [ configJson ];
+    # A restart, not reloadIfChanged: sing-box 1.13 does reload on SIGHUP
+    # (cmd_run.go: check the config, close the instance, create a new one in
+    # the same process), but that tears down and rebuilds the TUN and routes
+    # just like a restart, so it saves no connection. And it skips
+    # ExecStartPre, i.e. the stale-fakeip guard and the config stamp above:
+    # a reload after a fakeip pool change would keep the old cache.db.
     serviceConfig = {
       ExecStartPre = "${preStart}";
       ExecStart = "${pkgs.sing-box}/bin/sing-box run -c ${renderedConfig}";

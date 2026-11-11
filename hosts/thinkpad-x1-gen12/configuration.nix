@@ -21,6 +21,9 @@
     # herdr for 0xff, as on cloud-vm: ssh, mosh and osewa logins attach to
     # it; memory-capped server unit and tab-title plugin.
     ./herdr.nix
+    # `safe-switch`: a switch that survives a dropped ssh session and rolls
+    # itself back unless confirmed (README "Rebuild").
+    ./safe-switch.nix
   ];
 
   nix.settings.experimental-features = [
@@ -321,6 +324,12 @@
   # Auth is done once manually (`sudo tailscale up`) with key expiry disabled in the
   # admin console — no authKeyFile so rebuilds never fail on an expired/used key.
   services.tailscale.enable = true;
+  # A switch that changes tailscaled's unit (a tailscale bump) must not
+  # restart it: ssh and mosh into this laptop ride tailscale, so the restart
+  # drops the session that runs the switch. A new tailscale version applies
+  # on reboot or after a manual `sudo systemctl restart tailscaled` (from a
+  # local terminal or inside `safe-switch`'s rollback window).
+  systemd.services.tailscaled.restartIfChanged = false;
 
   # Firmware updates via LVFS (`fwupdmgr refresh && fwupdmgr update`); the
   # X1 gen 12's BIOS, EC, Thunderbolt and fingerprint reader all ship there.
@@ -363,6 +372,14 @@
   ];
 
   networking.networkmanager.enable = true;
+  # Same for the links under tailscale: NixOS restarts NetworkManager (on a
+  # change of its unit or NetworkManager.conf) and wpa_supplicant (on a
+  # change of its unit) during a switch by default; the wpa_supplicant
+  # restart drops the wifi association. Their changes apply on reboot or a
+  # manual `systemctl restart`. sshd needs nothing: NixOS gives it
+  # KillMode=process and stopIfChanged=false, so a restart keeps sessions.
+  systemd.services.NetworkManager.restartIfChanged = false;
+  systemd.services.wpa_supplicant.restartIfChanged = false;
 
   # Copy the NixOS configuration file and link it from the resulting system
   # (/run/current-system/configuration.nix). This is useful in case you
