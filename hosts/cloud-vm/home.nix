@@ -51,7 +51,9 @@
     # monitor), codegraph (semantic code-intelligence MCP for agents) and
     # herdr (agent-aware terminal multiplexer; not in our stable nixpkgs),
     # plus the opencode and pi coding agents (for testing craft's review
-    # delivery in them; logins are done by hand).
+    # delivery in them; logins are done by hand). llm-agents keeps the 1.x
+    # line as `opencode` and ships 2.x as `opencode2` with a bin/opencode2, so
+    # 2.x is linked in under the usual `opencode` name.
     # mosh logins attach to herdr (see users/common/zsh.nix), and the
     # moshi-hook daemon finds it on ~/.nix-profile/bin to follow agents by
     # their herdr pane.
@@ -61,7 +63,15 @@
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.clauth
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.codegraph
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.herdr
-      inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.opencode
+      (
+        let
+          opencode2 = inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.opencode2;
+        in
+        pkgs.runCommand "opencode-${opencode2.version}" { } ''
+          mkdir -p $out/bin
+          ln -s ${opencode2}/bin/opencode2 $out/bin/opencode
+        ''
+      )
       inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.pi
     ];
 
