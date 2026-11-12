@@ -255,6 +255,12 @@ in
     # (many PRs' dev shells). Collect garbage automatically when it gets low.
     min-free = 4 * 1024 * 1024 * 1024;
     max-free = 16 * 1024 * 1024 * 1024;
+    # One derivation at a time, and NIX_BUILD_CORES (cargo's -j) at 2 of the
+    # 4 vCPUs: with lto = "thin" and codegen-units = 1, every rustc of
+    # trading's bot-agent build runs to well over a GiB, and four of them in
+    # parallel still ran the VM out of memory with zram on (2026-11-12).
+    max-jobs = 1;
+    cores = 2;
   };
   nix.channel.enable = false;
   # Compressed swap in RAM. The VM has 6 GiB and no disk swap, and a Rust
@@ -263,7 +269,12 @@ in
   # job's `nix` client and the runner cancelled the job (exit 137). Build
   # memory compresses well, so zram buys the headroom without giving the VM
   # more of the host's RAM, which the local model already holds most of.
-  zramSwap.enable = true;
+  # memoryPercent caps the uncompressed data zram takes in (default 50); it is
+  # not an allocation, so allowing the whole 6 GiB costs nothing until used.
+  zramSwap = {
+    enable = true;
+    memoryPercent = 100;
+  };
   # Rustup-installed toolchains and other prebuilt binaries expect an FHS
   # loader, as on the host (programs.nix-ld in configuration.nix).
   programs.nix-ld.enable = true;
