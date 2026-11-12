@@ -76,7 +76,7 @@ in
       type = lib.types.listOf lib.types.str;
       default = [
         "PATH=%h/.nix-profile/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-        "NIX_PROFILES=/nix/var/nix/profiles/default %h/.nix-profile"
+        "\"NIX_PROFILES=/nix/var/nix/profiles/default %h/.nix-profile\""
         "NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
         "HERDR_CONFIG_PATH=%h/.config/herdr/desktop.toml"
       ];

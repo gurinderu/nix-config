@@ -32,7 +32,7 @@
       memoryMax = "10G";
       environment = [
         "PATH=/run/wrappers/bin:%h/.nix-profile/bin:%h/.local/bin:/etc/profiles/per-user/%u/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin"
-        "NIX_PROFILES=/run/current-system/sw /nix/var/nix/profiles/default /etc/profiles/per-user/%u %h/.nix-profile"
+        "\"NIX_PROFILES=/run/current-system/sw /nix/var/nix/profiles/default /etc/profiles/per-user/%u %h/.nix-profile\""
         "NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
       ];
     };
