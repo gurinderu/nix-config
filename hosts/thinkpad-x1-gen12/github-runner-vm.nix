@@ -257,6 +257,13 @@ in
     max-free = 16 * 1024 * 1024 * 1024;
   };
   nix.channel.enable = false;
+  # Compressed swap in RAM. The VM has 6 GiB and no disk swap, and a Rust
+  # release build in the guest's nix-daemon (trading's `nix build
+  # .#bot-agent`) peaks above that: the kernel OOM killer then took the
+  # job's `nix` client and the runner cancelled the job (exit 137). Build
+  # memory compresses well, so zram buys the headroom without giving the VM
+  # more of the host's RAM, which the local model already holds most of.
+  zramSwap.enable = true;
   # Rustup-installed toolchains and other prebuilt binaries expect an FHS
   # loader, as on the host (programs.nix-ld in configuration.nix).
   programs.nix-ld.enable = true;
@@ -363,6 +370,12 @@ in
       # The module sets ProtectHome=true, which also hides /run/user — and with
       # it the rootless podman socket. Nothing else lives under /home here.
       ProtectHome = false;
+      # The module's ProtectProc=invisible hides every process the runner does
+      # not own, PID 1 included, and the runner reads /proc/1/cgroup before it
+      # starts a job's `services:` containers: "Could not find a part of the
+      # path '/proc/1/cgroup'", then "Value cannot be null. (Parameter
+      # 'network')" and the job never starts. The VM is the isolation here.
+      ProtectProc = "default";
 
       # The module sets Restart="on-success" for ephemeral runners, so a failed
       # re-registration (e.g. ExecStartPre overran TimeoutStartSec, or the host
