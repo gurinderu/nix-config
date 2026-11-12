@@ -269,7 +269,6 @@
       ];
 
       programs.zed-editor.enable = true;
-      programs.vscode.enable = true;
       programs.alacritty.enable = true;
 
       home.stateVersion = "24.11";
