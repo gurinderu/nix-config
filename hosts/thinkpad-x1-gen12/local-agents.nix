@@ -177,6 +177,9 @@ let
     set -euo pipefail
     export HOME=${agentHome} PATH=${agentPath}
     umask 077
+    # sudo keeps the caller's cwd, somewhere in 0xff's home that this user
+    # cannot stat; git dies on it before reading the bundle.
+    cd ${agentHome}
     name=''${1:-}
     branch=''${2:-}
     ${checkName}
