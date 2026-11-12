@@ -33,8 +33,11 @@
 let
   podman = config.services.podman.package;
   dockerCompat = pkgs.runCommand "podman-docker-compat" { } ''
-    mkdir -p $out/bin
+    mkdir -p $out/bin $out/share/zsh/site-functions
     ln -s ${podman}/bin/podman $out/bin/docker
+    # zsh completion for the `docker` name, as NixOS's dockerCompat makes it:
+    # podman names the completed command after argv[0].
+    HOME=$TMPDIR $out/bin/docker completion zsh > $out/share/zsh/site-functions/_docker
   '';
   allowAll = [ { type = "insecureAcceptAnything"; } ];
 in

@@ -2,7 +2,7 @@
 # own `home.username`/`home.stateVersion`, and add host-specific packages and
 # programs on top. Only `pkgs` is required here (no unstable), so it works
 # under both nix-darwin and NixOS without extra specialArgs wiring.
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 let
   # Code-intelligence MCP server on PATH (UI variant). See pkgs/codebase-memory-mcp.
   codebase-memory-mcp = pkgs.callPackage ../../pkgs/codebase-memory-mcp { };
@@ -24,6 +24,15 @@ in
 
   programs.starship = import ./starship.nix;
   programs.zsh = import ./zsh.nix { inherit pkgs; };
+  # The _docker that oh-my-zsh's docker plugin left in its cache before
+  # zsh.nix dropped the plugin on Linux: that cache dir comes first in
+  # fpath, so the stale copy would shadow podman's completion. Linux only;
+  # the Mac keeps the plugin and its cache.
+  home.activation.dropOmzDockerCompletion = lib.mkIf pkgs.stdenv.isLinux (
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run rm -f "$HOME/.cache/oh-my-zsh/completions/_docker"
+    ''
+  );
   programs.neovim = import ./neovim.nix;
   programs.git = import ./git.nix;
   programs.gh = import ./gh.nix;
