@@ -25,6 +25,9 @@
 #   agent-import ~/src/foo        copy the repo in (git bundle; no hooks,
 #                                 config or hardlinks shared)
 #   agents foo                    infinity TUI in /var/lib/agent/work/foo
+#   agents .                      the same for the current directory, imported
+#                                 on first use (any folder; a non-git one
+#                                 is copied, results stay with the agent)
 #   agents foo -H "task"          headless
 #   agent-fetch foo               (inside ~/src/foo) fetch the agent's
 #                                 branches as agent-foo/*, then review
@@ -146,7 +149,7 @@ let
     esac
   '';
 
-  # The three commands 0xff may run as the agent user (sudo rules below).
+  # The commands 0xff may run as the agent user (sudo rules below).
   # Each sets its own HOME and PATH: sudo resets the environment.
   #
   # The TUI. It refuses when the service is down: the CLI would otherwise
@@ -202,6 +205,35 @@ let
       '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
     git -C "$dest" reset -q --hard
   '';
+  # A plain directory (not a git repo) as a tar on stdin, for `agents .`:
+  # unpacked as the agent's own files and committed, so the agent still works
+  # in a git repo (sandbox-local's clone_repo needs one).
+  importDirAsAgent = pkgs.writeShellScript "agent-import-dir-inner" ''
+    set -euo pipefail
+    export HOME=${agentHome} PATH=${agentPath}
+    umask 077
+    cd ${agentHome}
+    name=''${1:-}
+    ${checkName}
+    dest=${work}/"$name"
+    if [ -e "$dest" ]; then
+      echo "agent-import: $dest exists" >&2
+      exit 1
+    fi
+    mkdir "$dest"
+    ${pkgs.gnutar}/bin/tar -x --no-same-owner --no-same-permissions -C "$dest"
+    git init -q -b main "$dest"
+    git -C "$dest" add -A
+    git -C "$dest" -c user.name=agent -c user.email=agent@localhost \
+      commit -q --allow-empty -m "Import"
+  '';
+  # Exit 0 when the workspace exists.
+  hasAsAgent = pkgs.writeShellScript "agent-has-inner" ''
+    set -euo pipefail
+    name=''${1:-}
+    ${checkName}
+    test -d ${work}/"$name"
+  '';
   # The workspace's branches and tags as a bundle on stdout.
   exportAsAgent = pkgs.writeShellScript "agent-export-inner" ''
     set -euo pipefail
@@ -216,12 +248,27 @@ let
   # opens the agent's repository (its config, hooks and attributes are the
   # agent's to write) and no safe.directory exception is needed.
   agentCommands = [
+    # `agents .` (or bare `agents`) works on the current directory: its
+    # workspace is named after the directory and imported on first use, a
+    # git repo as with agent-import (committed state), anything else as a
+    # copy of its files. Later runs reopen that workspace as it is.
     (pkgs.writeShellScriptBin "agents" ''
-      if [ $# -lt 1 ]; then
-        echo "usage: agents <workspace> [infinity args...]   (workspaces: agent-import)" >&2
-        exit 2
+      set -euo pipefail
+      sudo=/run/wrappers/bin/sudo
+      if [ $# -eq 0 ] || [ "$1" = . ]; then
+        [ $# -gt 0 ] && shift
+        name=$(basename "$PWD" | tr -c 'A-Za-z0-9._\n-' - | sed 's/^\.*//')
+        if ! $sudo -u ${user} ${hasAsAgent} "$name"; then
+          if ${pkgs.git}/bin/git rev-parse --git-dir >/dev/null 2>&1; then
+            agent-import . "$name"
+          else
+            ${pkgs.gnutar}/bin/tar -c -C "$PWD" . | $sudo -u ${user} ${importDirAsAgent} "$name"
+            echo "copied $PWD as ${work}/$name"
+          fi
+        fi
+        set -- "$name" "$@"
       fi
-      exec /run/wrappers/bin/sudo -u ${user} ${tuiAsAgent} "$@"
+      exec $sudo -u ${user} ${tuiAsAgent} "$@"
     '')
     (pkgs.writeShellScriptBin "agent-import" ''
       set -euo pipefail
@@ -445,6 +492,8 @@ in
             [
               tuiAsAgent
               importAsAgent
+              importDirAsAgent
+              hasAsAgent
               exportAsAgent
             ];
       }
