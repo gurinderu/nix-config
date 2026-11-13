@@ -2,7 +2,8 @@
 # usage, remote permission prompts). Package: pkgs/moshi-hook (repacked
 # upstream release). Same shape as codebase-memory-ui.nix: one module emitting
 # a systemd user service on linux and a launchd agent on darwin, so any host
-# can import it. Currently imported by hosts/cloud-vm/home.nix only.
+# can import it. Imported by hosts/cloud-vm/home.nix and, for the thinkpad,
+# hosts/thinkpad-x1-gen12/moshi-hook.nix.
 #
 # Activation also runs `moshi-hook install` for the claude and codex targets
 # and pins auto-update off (see home.activation.moshiHookAgents below). Still
