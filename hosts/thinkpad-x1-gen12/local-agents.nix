@@ -411,17 +411,8 @@ in
         # The P-cores; with every layer offloaded the CPU mostly waits anyway.
         "--threads"
         "6"
-        # Keep the server's CPU-side memory (~2.5 GB) out of swap: with the
-        # runner VMs up it was paged out and back during generation, and
-        # output dropped to ~2 tokens/s. --no-mmap first, so the weights
-        # that live on the GPU are not also locked as a 17 GB file mapping;
-        # only the tensors kept on the CPU are read into (locked) memory.
-        "--no-mmap"
-        "--mlock"
       ];
     };
-    # mlock needs more than the default 8 MiB RLIMIT_MEMLOCK.
-    systemd.services.llama-cpp.serviceConfig.LimitMEMLOCK = "infinity";
 
     users.users.${user} = {
       isSystemUser = true;
