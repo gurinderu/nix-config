@@ -261,6 +261,12 @@ in
     # parallel still ran the VM out of memory with zram on (2026-11-12).
     max-jobs = 1;
     cores = 2;
+    # Nix 2.3x builds in /nix/var/nix/builds by default, which here is on the
+    # tmpfs root: half the VM's RAM at most, and every byte of it RAM. A
+    # release target dir filled it (ENOSPC copying libbot_agent.rlib) and
+    # counted against the 6 GiB the compiler needed. The store volume is disk
+    # and is recreated with the VM like the builds in it.
+    build-dir = "/nix/.rw-store/builds";
   };
   nix.channel.enable = false;
   # Compressed swap in RAM. The VM has 6 GiB and no disk swap, and a Rust
@@ -451,6 +457,7 @@ in
   };
 
   systemd.tmpfiles.rules = [
+    "d /nix/.rw-store/builds 0755 root root -"
     "d /var/lib/github-runner-work 0755 root root -"
     "d /var/lib/github-runner-work/${name} 0750 ${runnerUser} ${runnerUser} -"
     # The runner's diagnostic logs (Runner_*.log / Worker_*.log, the module's
