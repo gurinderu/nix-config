@@ -7,7 +7,8 @@
 # (github.com/rjyo/moshi) is private, and rjyo/homebrew-moshi is only a tap
 # whose formula downloads these same CDN tarballs. Hashes are the ones in
 # upstream's checksums.txt (https://cdn.getmoshi.app/hook/v<ver>/checksums.txt),
-# converted to SRI; bump version + all four hashes together.
+# converted to SRI; bump version + all four hashes together with ./update.sh
+# (upstream deletes old releases from the CDN, so keep this current).
 #
 #   Linux:  a single statically linked Go binary (plus README/docs) at the
 #           archive root, hence sourceRoot = ".".
@@ -24,23 +25,23 @@
   fetchurl,
 }:
 let
-  version = "0.4.48";
+  version = "0.4.54";
   sources = {
     x86_64-linux = {
       asset = "moshi-hook_Linux_x86_64.tar.gz";
-      hash = "sha256-0Ed4iQxUamK4V2p57TcQvK+0AdtklT/wIKZtYfDqu4w=";
+      hash = "sha256-SxPdAppaMe4r3bl7uVY/KBLuwP8exzDpIp00xQ6PeLk=";
     };
     aarch64-linux = {
       asset = "moshi-hook_Linux_arm64.tar.gz";
-      hash = "sha256-6+ejIvskdBhvop6TyT50KfC/m9veh8wPPTa4fQ04aUI=";
+      hash = "sha256-sSkYsvIsmDhJTFPl/B3K2nXmbDcN57f5DTZSugJrmG0=";
     };
     aarch64-darwin = {
       asset = "moshi-hook-app_Darwin_arm64.tar.gz";
-      hash = "sha256-uk9PlBCBUn+wO44jN4PVCkKHERhtVgBtVZx6iP8yTAk=";
+      hash = "sha256-vELnwNxsE+tBXXPo7FkYObSkQsbKOAYQudA3svjm12Q=";
     };
     x86_64-darwin = {
       asset = "moshi-hook-app_Darwin_x86_64.tar.gz";
-      hash = "sha256-bYA7lqKSKPLPTDAxe9NR3JXbgZLtQtubvn11xHmuUDM=";
+      hash = "sha256-imUhozHNcnNMvf7GpI2LTorpK8F2xp4mCMQNklUi5LU=";
     };
   };
   system = stdenvNoCC.hostPlatform.system;

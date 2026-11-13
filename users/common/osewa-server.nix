@@ -36,7 +36,7 @@
 # daily check after interactive commands otherwise).
 #
 # Restart=always rather than upstream's on-failure: the server should be up
-# whenever the unit is enabled, a clean exit included. moshi-hook (0.4.48),
+# whenever the unit is enabled, a clean exit included. moshi-hook (0.4.48 on),
 # when the phone enrolls in osewa while no server is running, may run `osewa
 # service install`, which writes its own unit over this one; a running
 # server keeps it off that path.
