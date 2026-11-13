@@ -168,6 +168,11 @@ let
       echo "agents: infinity-daemon.service is not running" >&2
       exit 1
     fi
+    if [ ! -d ${work}/"$name" ]; then
+      echo "agents: no workspace '$name'; make it with: agent-import <repo-path> $name" >&2
+      echo "existing: $(ls ${work} 2>/dev/null | tr '\n' ' ')" >&2
+      exit 1
+    fi
     cd ${work}/"$name"
     exec ${infinity}/bin/infinity "$@"
   '';
