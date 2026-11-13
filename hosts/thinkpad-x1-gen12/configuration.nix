@@ -20,6 +20,8 @@
     ./osewa.nix
     # moshi-hook daemon for the Moshi app, linked into ~/.local/bin.
     ./moshi-hook.nix
+    # Security / web-audit CLIs (recon, scanning, fuzzing) for 0xff.
+    ./security-tools.nix
     # herdr for 0xff, as on cloud-vm: ssh, mosh and osewa logins attach to
     # it; memory-capped server unit and tab-title plugin.
     ./herdr.nix

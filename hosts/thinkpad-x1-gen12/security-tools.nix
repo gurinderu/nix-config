@@ -16,7 +16,7 @@
     hakrawler
 
     # DNS / whois
-    dnsutils # dig, nslookup
+    dnsutils # dig, nslookup, host
     ldns # drill
     whois
 
