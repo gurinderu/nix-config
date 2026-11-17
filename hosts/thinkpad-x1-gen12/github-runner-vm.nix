@@ -62,6 +62,28 @@ let
   #    podman per runner user, so at job start nothing else can own a live
   #    testcontainer here — the old "more than one Runner.Worker" pool-safety
   #    check from the shared-host days is gone with the shared podman.
+  # Runs as runnerUser in ExecStartPre, before the ephemeral runner connects
+  # and picks up its one job (the watchdog only restarts the unit while idle,
+  # so nothing of ours runs legitimately at unit start). It clears what an
+  # interrupted prior job left behind: a GitHub `services:` container (e.g.
+  # Postgres on 5433) that outlived a killed runner, and — the subtle one —
+  # the rootless `rootlessport` port-forwarder, which survives podman's own
+  # unit stop ("left-over process rootlessport remains running after unit
+  # stopped" in the VM journal) and keeps the published port, so the next
+  # job's service container dies with "bind: address already in use".
+  cleanupBefore = pkgs.writeShellScript "gh-runner-cleanup-before.sh" ''
+    set -u
+    export HOME=/var/lib/${runnerUser}
+    export XDG_RUNTIME_DIR=/run/user/${toString runnerUid}
+    # Best-effort: remove every leftover container/pod.
+    ${pkgs.podman}/bin/podman rm -f -a >/dev/null 2>&1 || true
+    ${pkgs.podman}/bin/podman pod rm -f -a >/dev/null 2>&1 || true
+    # The actual port-freer: kill any rootlessport orphaned from a prior job.
+    # Runs as runnerUser, so pkill only ever reaches this user's processes.
+    ${pkgs.procps}/bin/pkill -x rootlessport >/dev/null 2>&1 || true
+    exit 0
+  '';
+
   jobStarted = pkgs.writeShellScript "gh-runner-job-started.sh" ''
     set -u
 
@@ -412,6 +434,10 @@ in
     # The rootless podman socket comes from the runner user's manager.
     wants = [ "user@${toString runnerUid}.service" ];
     after = [ "user@${toString runnerUid}.service" ];
+    # Before the module's own ExecStartPre (registration, _work wipe): sweep a
+    # prior job's leaked containers and orphaned rootlessport, so a freed port
+    # (5433 etc.) is available when the runner picks up the next job.
+    serviceConfig.ExecStartPre = lib.mkBefore [ "${cleanupBefore}" ];
   };
 
   # Self-heal against a silently-wedged listener. The runner reaches the GitHub
