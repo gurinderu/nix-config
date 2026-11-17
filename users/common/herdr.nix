@@ -34,18 +34,27 @@
 
   home.packages = [ inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.herdr ];
 
-  # Interactive ssh logins (and osewa sessions, see the header) land in
-  # herdr's default session (`herdr` alone attaches to it or starts it), with
-  # the full UI: a dropped connection reattaches to the same panes on the next
-  # login, and leaving herdr (detach or exit) closes the shell too. Skipped
-  # inside herdr (whose panes inherit SSH_CONNECTION from the login that
-  # started its server), for `ssh host cmd` / `osewa exec` (not interactive,
-  # so .zshrc never runs) and on dumb terminals. If herdr itself fails, the
-  # plain shell stays as a fallback. Order 995: right after the
+  # Interactive osewa sessions land in herdr's default session (`herdr` alone
+  # attaches to it or starts it), with the full UI: a dropped connection
+  # reattaches to the same panes on the next login, and leaving herdr (detach
+  # or exit) closes the shell too. mosh attaches through zsh.nix's own path
+  # (see the header), not this snippet.
+  #
+  # A PLAIN ssh login is deliberately NOT auto-attached: herdr receives no
+  # keystrokes over a bare ssh pty (it works over osewa and mosh), so attaching
+  # there left the keyboard dead. osewa and ssh both set SSH_CONNECTION, but
+  # osewa's server port is 7322 while sshd's (tailscale SSH included) is 22, so
+  # gate on the server port — the last field of SSH_CONNECTION. A plain ssh
+  # login then gets a normal shell; run `herdr` by hand there if wanted.
+  #
+  # Skipped inside herdr (whose panes inherit SSH_CONNECTION from the login
+  # that started its server), for `ssh host cmd` / `osewa exec` (not
+  # interactive, so .zshrc never runs) and on dumb terminals. If herdr itself
+  # fails, the plain shell stays as a fallback. Order 995: right after the
   # zsh-autosuggestions source (990, ./zsh.nix), before home-manager's
   # starship/direnv hooks (1000), whatever the module order.
   programs.zsh.initContent = lib.mkOrder 995 ''
-    if [[ -n $SSH_CONNECTION && -z $HERDR_ENV && $TERM != dumb ]]; then
+    if [[ -n $SSH_CONNECTION && -z $HERDR_ENV && $TERM != dumb && ''${SSH_CONNECTION##* } == 7322 ]]; then
       herdr && exit
     fi
   '';
