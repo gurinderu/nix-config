@@ -72,6 +72,21 @@ in
   # store path, kept alive by this generation like any home.file.
   home.file.".local/bin/osewa".source = "${osewa}/bin/osewa";
 
+  # `osewa login` from the Mac runs `osewa enroll && osewa server --daemon`
+  # over a non-interactive ssh (zsh -c, which sources ~/.zshenv). `server
+  # --daemon` is meant to find the already-running unit's server by its lock
+  # under $XDG_RUNTIME_DIR/osewa and exit 0, but tailscale SSH opens the
+  # session with no XDG_RUNTIME_DIR; it then tries to bind 7322, collides with
+  # the running unit ("listen tcp :7322: bind: address in use"), and login
+  # exits 1 before it records the host on the Mac (so `osewa attach` later says
+  # "unknown host"). Default the variable to this user's runtime dir when a
+  # session left it unset (pam sessions already set it, so this is a no-op
+  # there); lingering keeps /run/user/<uid> alive.
+  programs.zsh.envExtra = ''
+    : "''${XDG_RUNTIME_DIR:=/run/user/$(${pkgs.coreutils}/bin/id -u)}"
+    export XDG_RUNTIME_DIR
+  '';
+
   systemd.user.services.osewa = {
     Unit.Description = "osewa server (persistent terminals)";
     Service = {
